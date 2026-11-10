@@ -1,1438 +1,1651 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-RECORDER v10.0 — HACKERS TCHAD EDITION
-Auteur    : HACKERS TCHAD
-Style     : Green / Red Cyberpunk Terminal
-Licence   : Usage personnel / éducatif
-Fichier   : RECORDER.py (single-file application)
-
-Fonctionnalités :
-  • Enregistrement de l'écran (full screen ou moniteur sélectionné)
-  • Enregistrement de la webcam avec ouverture/fermeture manuelle
-  • Modes composites : écran seul, caméra seule, écran + webcam (PiP),
-    webcam + écran (PiP)
-  • Minuterie programmable (arrêt automatique après N minutes)
-  • Pause / reprise de l'enregistrement
-  • Capture d'écran instantanée
-  • Audio microphone optionnel (si PyAudio disponible)
-  • Overlay texte personnalisable, watermark, horodatage, indicateur REC
-  • Choix de la résolution, du FPS, du codec et de la qualité
-  • Historique des fichiers + ouverture directe
-  • Journal système en temps réel
-  • Raccourcis clavier : F9, F10, F11, F12
-  • Thèmes green / red / blue / amber
-  • Interface tkinter single-page avec onglets
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                                                                              ║
+║   HACKERS TCHAD - ADVANCED SCREEN & CAMERA RECORDER v9.9.9                   ║
+║                                                                              ║
+║   Auteur  : HACKERS TCHAD                                                    ║
+║   Version : 9.9.9 (ULTIMATE EDITION)                                         ║
+║   Date    : 2025                                                             ║
+║   Style   : Cyberpunk Hacker - Vert/Rouge/Noir                               ║
+║                                                                              ║
+║   Fonctionnalités principales :                                              ║
+║   - Enregistrement d'écran haute qualité (jusqu'à 4K/60 FPS)                 ║
+║   - Enregistrement de la webcam intégrée ou externe                          ║
+║   - Choix du moniteur à capturer (multi-écrans)                              ║
+║   - Choix entre mode ÉCRAN, CAMÉRA ou LES DEUX                               ║
+║   - Interface Tkinter avancée et stylisée                                    ║
+║   - Sauvegarde automatique sur le Bureau                                     ║
+║   - Compteur de minutes en temps réel                                        ║
+║   - Prévisualisation en direct                                               ║
+║   - Raccourcis clavier globaux                                               ║
+║   - Détection des résolutions, codecs, périphériques                         ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
 """
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# IMPORTS
+# IMPORTATIONS GLOBALES
 # ═══════════════════════════════════════════════════════════════════════════════
+
 import os
 import sys
-import time
-import json
-import wave
-import queue
-import threading
-import datetime
-import subprocess
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
-from collections import deque
-from pathlib import Path
-
 import cv2
 import numpy as np
-from PIL import Image, ImageTk
+import mss
+import threading
+import time
+import datetime
+import json
+import platform
+import subprocess
+import shutil
+import ctypes
+import logging
+import queue
+import random
+import string
+import tkinter as tk
+from tkinter import ttk, messagebox, filedialog, scrolledtext
+from PIL import Image, ImageTk, ImageDraw, ImageFont
+from pathlib import Path
+from collections import deque
 
+# Gestion optionnelle du son
+RECORD_AUDIO = False
 try:
-    import pyautogui
-    HAVE_PYAUTOGUI = True
-except Exception:
-    HAVE_PYAUTOGUI = False
+    import sounddevice as sd
+    import soundfile as sf
+    RECORD_AUDIO = True
+except ImportError:
+    RECORD_AUDIO = False
 
+# Gestion optionnelle des raccourcis globaux
 try:
-    from screeninfo import get_monitors
-    HAVE_SCREENINFO = True
-except Exception:
-    HAVE_SCREENINFO = False
+    import keyboard
+    GLOBAL_HOTKEYS = True
+except ImportError:
+    GLOBAL_HOTKEYS = False
 
+# Gestion optionnelle des infos système
 try:
-    import pyaudio
-    HAVE_PYAUDIO = True
-except Exception:
-    HAVE_PYAUDIO = False
-
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONSTANTES & CONFIGURATION GLOBALE
+# CONFIGURATION GLOBALE ET CONSTANTES
 # ═══════════════════════════════════════════════════════════════════════════════
-APP_NAME = "RECORDER"
-VERSION = "10.0"
-AUTHOR = "HACKERS TCHAD"
 
-DEFAULT_BG = "#050505"
-DEFAULT_FG = "#00FF41"
-ACCENT_RED = "#FF1A1A"
-ACCENT_DIM = "#003B00"
-FONT_FAMILY = "Consolas"
-MONO_FONT = "Courier New"
-CONFIG_FILE = "recorder_config.json"
+APP_NAME = "HACKERS TCHAD RECORDER"
+APP_VERSION = "9.9.9 ULTIMATE"
+APP_AUTHOR = "HACKERS TCHAD"
+APP_SIGNATURE = "[HT]"
 
-LOGGER = None  # initialisé plus tard
+# Palette cyberpunk / hacker
+color = {
+    "bg": "#050505",
+    "bg2": "#0a0a0a",
+    "bg3": "#111111",
+    "fg": "#00ff41",
+    "fg2": "#00cc33",
+    "accent": "#ff0033",
+    "accent2": "#cc0022",
+    "warn": "#ffcc00",
+    "info": "#00ffff",
+    "text": "#e0e0e0",
+    "disabled": "#555555",
+    "border": "#004411",
+    "red_border": "#550000",
+    "green_glow": "#00ff41",
+    "red_glow": "#ff0033",
+}
+
+# Polices
+font = {
+    "mono": ("Consolas", 10),
+    "mono_bold": ("Consolas", 10, "bold"),
+    "title": ("Consolas", 16, "bold"),
+    "big": ("Consolas", 24, "bold"),
+    "huge": ("Consolas", 36, "bold"),
+    "small": ("Consolas", 8),
+}
+
+# Configuration par défaut
+DEFAULT_CONFIG = {
+    "fps": 30,
+    "quality": "high",
+    "codec": "mp4v",
+    "resolution": "auto",
+    "output_dir": "",
+    "prefix": "HT_REC_",
+    "hotkey_record": "f9",
+    "hotkey_stop": "f10",
+    "hotkey_screenshot": "f11",
+    "theme": "hacker_green",
+    "show_preview": True,
+    "record_audio": False,
+    "cursor": True,
+    "monitor": 0,
+    "camera_id": 0,
+    "mode": "screen",
+    "watermark": True,
+    "watermark_text": "HACKERS TCHAD",
+    "split_screen": False,
+    "auto_stop": 0,
+}
+
+# Logs
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger("HTR")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FONCTIONS UTILITAIRES
 # ═══════════════════════════════════════════════════════════════════════════════
+
 def get_desktop_path():
-    """Retourne le chemin du Bureau quel que soit la langue du système."""
-    home = Path.home()
-    candidates = [
-        home / "Desktop",
-        home / "Bureau",
-        home / "OneDrive" / "Desktop",
-        home / "OneDrive" / "Bureau",
-    ]
-    for c in candidates:
-        if c.exists() and c.is_dir():
-            return str(c)
-    return str(home)
+    """Récupère le chemin du Bureau de l'utilisateur."""
+    system = platform.system()
+    try:
+        if system == "Windows":
+            return os.path.join(os.path.expanduser("~"), "Desktop")
+        elif system == "Darwin":
+            return os.path.join(os.path.expanduser("~"), "Desktop")
+        else:
+            desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+            if os.path.isdir(desktop):
+                return desktop
+            return os.path.expanduser("~")
+    except Exception as e:
+        logger.error(f"Erreur desktop path: {e}")
+        return os.path.expanduser("~")
 
 
 def ensure_dir(path):
-    """Crée le dossier s'il n'existe pas."""
-    Path(path).mkdir(parents=True, exist_ok=True)
+    """Crée un répertoire s'il n'existe pas."""
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+        return True
+    except Exception as e:
+        logger.error(f"Erreur création dossier {path}: {e}")
+        return False
 
 
-def safe_filename(name):
-    """Nettoie une chaîne pour l'utiliser comme nom de fichier."""
-    keep = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
-    return "".join(c if c in keep else "_" for c in name) or "capture"
+def generate_filename(prefix, suffix, ext):
+    """Génère un nom de fichier unique avec timestamp."""
+    now = datetime.datetime.now()
+    timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
+    random_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+    return f"{prefix}{timestamp}_{random_id}{suffix}.{ext}"
 
 
 def format_duration(seconds):
-    """Formate une durée en HH:MM:SS."""
-    s = int(seconds)
-    h, rem = divmod(s, 3600)
-    m, sec = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{sec:02d}"
+    """Formate une durée en secondes en HH:MM:SS."""
+    seconds = int(seconds)
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 def format_size(size_bytes):
-    """Formate une taille en B/KB/MB/GB/TB."""
-    if size_bytes < 0:
-        return "0 B"
-    for unit in ["B", "KB", "MB", "GB", "TB"]:
-        if size_bytes < 1024.0:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024.0
-    return f"{size_bytes:.1f} PB"
+    """Formate une taille en bytes en unités lisibles."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+    else:
+        return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
 
 
-def hex_to_rgb(hex_color):
-    """Convertit une couleur hex en tuple BGR."""
-    hex_color = hex_color.lstrip("#")
-    return tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+def get_system_info():
+    """Récupère les informations système de base."""
+    info = {
+        "os": platform.system(),
+        "release": platform.release(),
+        "version": platform.version(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python": platform.python_version(),
+    }
+    if HAS_PSUTIL:
+        info["cpu_count"] = psutil.cpu_count(logical=True)
+        info["ram_total"] = format_size(psutil.virtual_memory().total)
+        info["ram_used"] = format_size(psutil.virtual_memory().used)
+        info["cpu_percent"] = psutil.cpu_percent(interval=0.1)
+    else:
+        info["cpu_count"] = "N/A"
+        info["ram_total"] = "N/A"
+        info["ram_used"] = "N/A"
+        info["cpu_percent"] = "N/A"
+    return info
 
 
-def now_str():
-    """Retourne un timestamp compact."""
-    return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+def list_available_cameras(max_id=10):
+    """Liste les caméras disponibles."""
+    cameras = []
+    for i in range(max_id):
+        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY)
+        if cap.isOpened():
+            ret, _ = cap.read()
+            if ret:
+                width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                cameras.append({"id": i, "name": f"Caméra {i} ({width}x{height})", "res": (width, height)})
+            cap.release()
+    return cameras
 
 
-def parse_resolution(text):
-    """Parse une chaîne '1920x1080' en tuple."""
+def list_available_monitors():
+    """Liste les moniteurs disponibles via mss."""
     try:
-        w, h = text.lower().split("x")
-        return int(w), int(h)
-    except Exception:
-        return 1920, 1080
+        with mss.mss() as sct:
+            monitors = sct.monitors
+            result = []
+            for idx, mon in enumerate(monitors):
+                result.append({
+                    "id": idx,
+                    "name": f"Moniteur {idx}: {mon['width']}x{mon['height']} @ ({mon['left']},{mon['top']})",
+                    "rect": mon,
+                })
+            return result
+    except Exception as e:
+        logger.error(f"Erreur liste moniteurs: {e}")
+        return [{"id": 0, "name": "Tous les écrans", "rect": {"left": 0, "top": 0, "width": 1920, "height": 1080}}]
+
+
+def get_cv2_codecs():
+    """Retourne les codecs compatibles OpenCV courants."""
+    return {
+        "mp4v": {"ext": "mp4", "desc": "MPEG-4 (compatible)"},
+        "XVID": {"ext": "avi", "desc": "XviD AVI"},
+        "MJPG": {"ext": "avi", "desc": "Motion JPEG"},
+        "DIV3": {"ext": "avi", "desc": "DivX 3"},
+        "H264": {"ext": "mp4", "desc": "H.264 (si installé)"},
+        "X264": {"ext": "mp4", "desc": "x264 (si installé)"},
+        "avc1": {"ext": "mp4", "desc": "AVC1 (si installé)"},
+    }
+
+
+def draw_hacker_watermark(frame, text="HACKERS TCHAD", color=(0, 255, 65), alpha=0.7):
+    """Ajoute un watermark style hacker sur une frame."""
+    if frame is None:
+        return None
+    overlay = frame.copy()
+    h, w = frame.shape[:2]
+    font_scale = max(w / 1920, 0.5)
+    thickness = max(int(font_scale * 2), 1)
+    text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)[0]
+    x = w - text_size[0] - 20
+    y = h - 20
+    cv2.putText(overlay, text, (x, y), cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness, cv2.LINE_AA)
+    cv2.rectangle(overlay, (x - 10, y - text_size[1] - 10), (w - 10, y + 10), color, 2)
+    return cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0)
+
+
+def draw_recording_indicator(frame, elapsed_seconds, fps=0):
+    """Dessine un indicateur rouge d'enregistrement + timer."""
+    if frame is None:
+        return None
+    h, w = frame.shape[:2]
+    radius = max(w // 80, 12)
+    center = (radius + 20, radius + 20)
+    color_red = (0, 0, 255)
+    if int(elapsed_seconds * 2) % 2 == 0:
+        cv2.circle(frame, center, radius, color_red, -1)
+    timer_text = format_duration(elapsed_seconds)
+    fps_text = f"{fps:.1f} FPS"
+    cv2.putText(frame, f"REC {timer_text} | {fps_text}", (center[0] + radius + 15, center[1] + 8),
+                cv2.FONT_HERSHEY_SIMPLEX, max(w / 1600, 0.5), color_red, 1, cv2.LINE_AA)
+    return frame
+
+
+def resize_keep_aspect(frame, max_width, max_height):
+    """Redimensionne une frame en conservant le ratio."""
+    if frame is None:
+        return None
+    h, w = frame.shape[:2]
+    scale = min(max_width / w, max_height / h, 1.0)
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+
+def apply_matrix_effect(frame, intensity=0.1):
+    """Applique un effet matrice léger sur une frame pour la prévisualisation."""
+    if frame is None or intensity <= 0:
+        return frame
+    mask = np.zeros_like(frame)
+    h, w = frame.shape[:2]
+    num_lines = int(w * intensity / 5)
+    for _ in range(num_lines):
+        x = random.randint(0, w - 1)
+        y = random.randint(0, h - 1)
+        cv2.line(mask, (x, 0), (x, h), (0, int(random.uniform(50, 150)), 0), 1)
+    return cv2.addWeighted(frame, 1.0, mask, 0.3, 0)
+
+
+def overlay_camera_on_screen(screen_frame, cam_frame, position="bottom-right", size_ratio=0.25):
+    """Superpose la caméra sur l'écran en mode picture-in-picture."""
+    if screen_frame is None or cam_frame is None:
+        return screen_frame
+    h, w = screen_frame.shape[:2]
+    cam_h, cam_w = cam_frame.shape[:2]
+    target_w = int(w * size_ratio)
+    target_h = int(target_w * cam_h / cam_w)
+    cam_resized = cv2.resize(cam_frame, (target_w, target_h), interpolation=cv2.INTER_AREA)
+    margin = 20
+    if position == "bottom-right":
+        x1, y1 = w - target_w - margin, h - target_h - margin
+    elif position == "bottom-left":
+        x1, y1 = margin, h - target_h - margin
+    elif position == "top-right":
+        x1, y1 = w - target_w - margin, margin
+    elif position == "top-left":
+        x1, y1 = margin, margin
+    else:
+        x1, y1 = w - target_w - margin, h - target_h - margin
+    x2, y2 = x1 + target_w, y1 + target_h
+    screen_frame[y1:y2, x1:x2] = cam_resized
+    cv2.rectangle(screen_frame, (x1, y1), (x2, y2), (0, 255, 65), 2)
+    return screen_frame
+
+
+def make_split_screen(screen_frame, cam_frame):
+    """Crée un écran partagé 50/50 entre écran et caméra."""
+    if screen_frame is None or cam_frame is None:
+        return screen_frame
+    h, w = screen_frame.shape[:2]
+    cam_resized = cv2.resize(cam_frame, (w // 2, h), interpolation=cv2.INTER_AREA)
+    combined = np.zeros((h, w, 3), dtype=np.uint8)
+    screen_half = cv2.resize(screen_frame, (w // 2, h), interpolation=cv2.INTER_AREA)
+    combined[:, :w // 2] = screen_half
+    combined[:, w // 2:] = cam_resized
+    cv2.line(combined, (w // 2, 0), (w // 2, h), (0, 255, 65), 2)
+    return combined
+
+
+def add_timestamp_overlay(frame):
+    """Ajoute un horodatage sur la frame."""
+    if frame is None:
+        return None
+    h, w = frame.shape[:2]
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    cv2.putText(frame, timestamp, (10, h - 15), cv2.FONT_HERSHEY_SIMPLEX, max(w / 1800, 0.5),
+                (0, 255, 65), 1, cv2.LINE_AA)
+    return frame
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CONFIGURATION PERSISTANTE
+# CLASSE DE GESTION DE LA CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
-class Config:
-    """Gère la sauvegarde et le chargement de la configuration JSON."""
 
-    def __init__(self, path=CONFIG_FILE):
-        self.path = path
-        self.data = {}
-        self.load()
-
-    def load(self):
-        defaults = {
-            "output_dir": get_desktop_path(),
-            "filename": "RECORDER_capture",
-            "fps": 30,
-            "quality": "Haute",
-            "mode": "Écran seul",
-            "resolution": "1920x1080",
-            "monitor": 0,
-            "pip_position": "bottom-right",
-            "pip_scale": 0.25,
-            "webcam_shape": "rectangle",
-            "show_watermark": True,
-            "show_timestamp": True,
-            "show_rec_indicator": True,
-            "overlay_text": "HACKERS TCHAD",
-            "theme": "green",
-            "audio_enabled": True,
-            "timer_enabled": False,
-            "timer_minutes": 5,
-            "window_geometry": "1280x800+100+50",
-        }
-        try:
-            if os.path.exists(self.path):
-                with open(self.path, "r", encoding="utf-8") as f:
-                    loaded = json.load(f)
-                defaults.update(loaded)
-        except Exception as exc:
-            if LOGGER:
-                LOGGER.error(f"Config load : {exc}")
-        self.data = defaults
-
-    def save(self):
-        try:
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, indent=2, ensure_ascii=False)
-        except Exception as exc:
-            if LOGGER:
-                LOGGER.error(f"Config save : {exc}")
-
-    def get(self, key, default=None):
-        return self.data.get(key, default)
-
-    def set(self, key, value):
-        self.data[key] = value
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# JOURNAL SYSTÈME
-# ═══════════════════════════════════════════════════════════════════════════════
-class Logger:
-    """Journal thread-safe avec historique circulaire et listeners."""
-
-    def __init__(self, capacity=500):
-        self.capacity = capacity
-        self.buffer = deque(maxlen=capacity)
-        self.lock = threading.Lock()
-        self.listeners = []
-
-    def add_listener(self, callback):
-        with self.lock:
-            self.listeners.append(callback)
-
-    def log(self, level, message):
-        stamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        line = f"[{stamp}] [{level}] {message}"
-        with self.lock:
-            self.buffer.append(line)
-            listeners = list(self.listeners)
-        for cb in listeners:
-            try:
-                cb(line)
-            except Exception:
-                pass
-
-    def info(self, msg):
-        self.log("INFO", msg)
-
-    def warn(self, msg):
-        self.log("WARN", msg)
-
-    def error(self, msg):
-        self.log("ERROR", msg)
-
-    def get_lines(self, n=200):
-        with self.lock:
-            return list(self.buffer)[-n:]
-
-
-LOGGER = Logger()
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ENREGISTREMENT AUDIO (optionnel)
-# ═══════════════════════════════════════════════════════════════════════════════
-class AudioRecorder:
-    """Capture le microphone via PyAudio si disponible."""
+class ConfigManager:
+    """Gère la sauvegarde et le chargement de la configuration utilisateur."""
 
     def __init__(self):
+        self.config_dir = Path.home() / ".hackers_tchad_recorder"
+        self.config_file = self.config_dir / "config.json"
+        ensure_dir(self.config_dir)
+        self.config = self.load()
+
+    def load(self):
+        """Charge la configuration depuis le fichier JSON."""
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                    config = DEFAULT_CONFIG.copy()
+                    config.update(loaded)
+                    return config
+            except Exception as e:
+                logger.error(f"Erreur chargement config: {e}")
+        return DEFAULT_CONFIG.copy()
+
+    def save(self):
+        """Sauvegarde la configuration dans le fichier JSON."""
+        try:
+            with open(self.config_file, "w", encoding="utf-8") as f:
+                json.dump(self.config, f, indent=4, ensure_ascii=False)
+            return True
+        except Exception as e:
+            logger.error(f"Erreur sauvegarde config: {e}")
+            return False
+
+    def get(self, key, default=None):
+        return self.config.get(key, default)
+
+    def set(self, key, value):
+        self.config[key] = value
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLASSE D'ENREGISTREMENT AUDIO (OPTIONNEL)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class AudioRecorder:
+    """Enregistre l'audio du microphone ou du système si disponible."""
+
+    def __init__(self, output_path, sample_rate=44100, channels=2):
+        self.output_path = output_path
+        self.sample_rate = sample_rate
+        self.channels = channels
         self.recording = False
         self.frames = []
         self.thread = None
-        self.audio = None
-        self.stream = None
-        self.sample_rate = 44100
-        self.channels = 2
-        self.chunk = 1024
+        self.device = None
 
     def start(self):
-        if not HAVE_PYAUDIO:
-            LOGGER.warn("PyAudio absent — audio désactivé")
+        if not RECORD_AUDIO:
+            logger.warning("Module sounddevice/soundfile non installé. Audio désactivé.")
             return False
         try:
-            self.audio = pyaudio.PyAudio()
-            self.frames = []
             self.recording = True
-            self.thread = threading.Thread(target=self._capture, daemon=True)
-            self.thread.start()
-            LOGGER.info("Audio démarré")
-            return True
-        except Exception as exc:
-            LOGGER.error(f"Audio start : {exc}")
-            return False
-
-    def _capture(self):
-        try:
-            self.stream = self.audio.open(
-                format=pyaudio.paInt16,
-                channels=self.channels,
-                rate=self.sample_rate,
-                input=True,
-                frames_per_buffer=self.chunk,
-            )
-            while self.recording:
-                data = self.stream.read(self.chunk, exception_on_overflow=False)
-                self.frames.append(data)
-        except Exception as exc:
-            LOGGER.error(f"Audio capture : {exc}")
-
-    def stop(self, output_path):
-        if not self.recording:
-            return
-        self.recording = False
-        if self.thread:
-            self.thread.join(timeout=2)
-        try:
-            if self.stream:
-                self.stream.stop_stream()
-                self.stream.close()
-            if self.audio:
-                with wave.open(output_path, "wb") as wf:
-                    wf.setnchannels(self.channels)
-                    wf.setsampwidth(self.audio.get_sample_size(pyaudio.paInt16))
-                    wf.setframerate(self.sample_rate)
-                    wf.writeframes(b"".join(self.frames))
-                LOGGER.info(f"Audio sauvegardé : {output_path}")
-        except Exception as exc:
-            LOGGER.error(f"Audio save : {exc}")
-        finally:
-            if self.audio:
-                self.audio.terminate()
-            self.stream = None
-            self.audio = None
             self.frames = []
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SOURCES VIDÉO
-# ═══════════════════════════════════════════════════════════════════════════════
-class ScreenSource:
-    """Capture de l'écran avec pyautogui."""
-
-    def __init__(self, monitor_index=0, region=None):
-        self.monitor_index = monitor_index
-        self.region = region
-        self._size = self._compute_size()
-
-    def _compute_size(self):
-        if self.region:
-            return self.region[2], self.region[3]
-        if HAVE_SCREENINFO:
-            try:
-                monitors = get_monitors()
-                idx = max(0, min(self.monitor_index, len(monitors) - 1))
-                m = monitors[idx]
-                return m.width, m.height
-            except Exception:
-                pass
-        if HAVE_PYAUTOGUI:
-            return pyautogui.size()
-        return 1920, 1080
-
-    def read(self):
-        if not HAVE_PYAUTOGUI:
-            return None
-        try:
-            if self.region:
-                img = pyautogui.screenshot(region=self.region)
-            else:
-                img = pyautogui.screenshot()
-            return cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        except Exception as exc:
-            LOGGER.error(f"Screen capture : {exc}")
-            return None
-
-    def get_size(self):
-        return self._size
-
-    def list_monitors(self):
-        if HAVE_SCREENINFO:
-            try:
-                return [f"{i}: {m.width}x{m.height}" for i, m in enumerate(get_monitors())]
-            except Exception:
-                pass
-        return ["0: principal"]
-
-
-class CameraSource:
-    """Capture de la webcam avec OpenCV."""
-
-    def __init__(self, index=0, width=1280, height=720):
-        self.index = index
-        self.width = width
-        self.height = height
-        self.cap = None
-        self.active = False
-
-    def start(self):
-        try:
-            self.cap = cv2.VideoCapture(self.index, cv2.CAP_DSHOW)
-        except Exception:
-            self.cap = cv2.VideoCapture(self.index)
-        if not self.cap.isOpened():
-            self.active = False
-            LOGGER.error(f"Caméra {self.index} inaccessible")
+            self.thread = threading.Thread(target=self._record_loop, daemon=True)
+            self.thread.start()
+            return True
+        except Exception as e:
+            logger.error(f"Erreur démarrage audio: {e}")
             return False
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
-        self.active = True
-        LOGGER.info(f"Caméra {self.index} active")
-        return True
+
+    def _record_loop(self):
+        try:
+            with sd.InputStream(samplerate=self.sample_rate, channels=self.channels, dtype='float32') as stream:
+                while self.recording:
+                    data, _ = stream.read(1024)
+                    self.frames.append(data.copy())
+        except Exception as e:
+            logger.error(f"Erreur capture audio: {e}")
 
     def stop(self):
-        if self.cap:
-            self.cap.release()
-            self.cap = None
-        self.active = False
-        LOGGER.info("Caméra fermée")
-
-    def read(self):
-        if self.cap and self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if ret:
-                return frame
-        return None
-
-    def get_size(self):
-        if self.cap and self.cap.isOpened():
-            return (
-                int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-            )
-        return self.width, self.height
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# RENDU COMPOSITE (écran + caméra)
-# ═══════════════════════════════════════════════════════════════════════════════
-class CompositeRenderer:
-    """Combine écran et webcam selon le mode choisi."""
-
-    MODES = [
-        "Écran seul",
-        "Caméra seule",
-        "Écran + webcam (PiP)",
-        "Webcam + écran (PiP)",
-    ]
-
-    def __init__(self, mode="Écran seul"):
-        self.mode = mode
-        self.pip_position = "bottom-right"
-        self.pip_scale = 0.25
-        self.webcam_shape = "rectangle"
-        self.show_watermark = True
-        self.show_timestamp = True
-        self.show_rec_indicator = True
-        self.overlay_text = ""
-        self.border_color = DEFAULT_FG
-        self.bg_fallback = np.zeros((1080, 1920, 3), dtype=np.uint8)
-
-    def set_mode(self, mode):
-        if mode in self.MODES:
-            self.mode = mode
-
-    def render(self, screen_frame, cam_frame, is_recording, elapsed):
-        if self.mode == "Caméra seule":
-            canvas = self._camera_canvas(cam_frame)
-        elif self.mode == "Écran seul":
-            canvas = self._screen_canvas(screen_frame)
-        elif self.mode == "Écran + webcam (PiP)":
-            canvas = self._screen_canvas(screen_frame)
-            if cam_frame is not None:
-                canvas = self._overlay_pip(canvas, cam_frame)
-        elif self.mode == "Webcam + écran (PiP)":
-            canvas = self._camera_canvas(cam_frame) if cam_frame is not None else self._screen_canvas(screen_frame)
-            if screen_frame is not None and cam_frame is not None:
-                canvas = self._overlay_pip(canvas, screen_frame)
-        else:
-            canvas = self._screen_canvas(screen_frame)
-
-        if self.show_rec_indicator and is_recording:
-            self._draw_rec_indicator(canvas)
-        if self.show_timestamp:
-            self._draw_timestamp(canvas, elapsed)
-        if self.overlay_text:
-            self._draw_overlay_text(canvas)
-        if self.show_watermark:
-            self._draw_watermark(canvas)
-        return canvas
-
-    def _screen_canvas(self, frame):
-        if frame is None:
-            return self.bg_fallback.copy()
-        return frame.copy()
-
-    def _camera_canvas(self, frame):
-        if frame is None:
-            canvas = np.zeros((720, 1280, 3), dtype=np.uint8)
-            cv2.putText(canvas, "CAMERA OFFLINE", (300, 380),
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 4)
-            return canvas
-        return frame.copy()
-
-    def _overlay_pip(self, base, overlay):
-        h, w = base.shape[:2]
-        oh, ow = overlay.shape[:2]
-        new_w = max(120, int(w * self.pip_scale))
-        new_h = int(new_w * oh / ow)
-        new_h = max(90, new_h)
-        resized = cv2.resize(overlay, (new_w, new_h))
-
-        if self.webcam_shape == "circle":
-            resized = self._make_circle(resized)
-        elif self.webcam_shape == "rounded":
-            resized = self._make_rounded(resized, 30)
-
-        positions = {
-            "top-left": (20, 20),
-            "top-right": (w - new_w - 20, 20),
-            "bottom-left": (20, h - new_h - 20),
-            "bottom-right": (w - new_w - 20, h - new_h - 20),
-        }
-        x, y = positions.get(self.pip_position, positions["bottom-right"])
-        x = max(0, min(x, w - new_w))
-        y = max(0, min(y, h - new_h))
-
+        if not self.recording:
+            return False
+        self.recording = False
+        if self.thread:
+            self.thread.join(timeout=2.0)
         try:
-            roi = base[y:y + new_h, x:x + new_w]
-            if resized.shape[2] == 4:
-                mask = resized[:, :, 3]
-                mask_inv = cv2.bitwise_not(mask)
-                bg = cv2.bitwise_and(roi, roi, mask=mask_inv)
-                fg = cv2.bitwise_and(resized[:, :, :3], resized[:, :, :3], mask=mask)
-                dst = cv2.add(bg, fg)
-            else:
-                dst = resized
-            base[y:y + new_h, x:x + new_w] = dst
-            cv2.rectangle(base, (x, y), (x + new_w, y + new_h),
-                          hex_to_rgb(self.border_color), 2)
-        except Exception as exc:
-            LOGGER.error(f"PiP overlay : {exc}")
-        return base
-
-    def _make_circle(self, img):
-        h, w = img.shape[:2]
-        center = (w // 2, h // 2)
-        radius = min(w, h) // 2
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.circle(mask, center, radius, 255, -1)
-        rgba = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-        rgba[:, :, 3] = mask
-        return rgba
-
-    def _make_rounded(self, img, radius):
-        h, w = img.shape[:2]
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.rectangle(mask, (radius, 0), (w - radius, h), 255, -1)
-        cv2.rectangle(mask, (0, radius), (w, h - radius), 255, -1)
-        cv2.circle(mask, (radius, radius), radius, 255, -1)
-        cv2.circle(mask, (w - radius, radius), radius, 255, -1)
-        cv2.circle(mask, (radius, h - radius), radius, 255, -1)
-        cv2.circle(mask, (w - radius, h - radius), radius, 255, -1)
-        rgba = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
-        rgba[:, :, 3] = mask
-        return rgba
-
-    def _draw_rec_indicator(self, canvas):
-        h, w = canvas.shape[:2]
-        radius = max(10, int(min(h, w) * 0.012))
-        cx, cy = w - radius - 40, radius + 40
-        blink = int(time.time() * 2) % 2 == 0
-        color = (0, 0, 255) if blink else (80, 0, 0)
-        cv2.circle(canvas, (cx, cy), radius, color, -1)
-        cv2.putText(canvas, "REC", (cx - 70, cy + 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-    def _draw_timestamp(self, canvas, elapsed):
-        h, w = canvas.shape[:2]
-        text = format_duration(elapsed)
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        full = f"{text}  |  {now}"
-        scale = max(0.5, min(h, w) / 2200)
-        thick = max(1, int(scale * 2))
-        cv2.putText(canvas, full, (20, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 255, 0), thick)
-
-    def _draw_overlay_text(self, canvas):
-        h, w = canvas.shape[:2]
-        y = h - 30
-        cv2.putText(canvas, self.overlay_text, (20, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
-
-    def _draw_watermark(self, canvas):
-        h, w = canvas.shape[:2]
-        text = f"{APP_NAME} v{VERSION} — {AUTHOR}"
-        scale = max(0.4, min(h, w) / 2800)
-        thick = max(1, int(scale))
-        (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
-        cv2.putText(canvas, text, (w - tw - 20, h - 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 100, 0), thick)
+            if self.frames:
+                audio = np.concatenate(self.frames, axis=0)
+                sf.write(self.output_path, audio, self.sample_rate)
+                return True
+        except Exception as e:
+            logger.error(f"Erreur sauvegarde audio: {e}")
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# MOTEUR D'ENREGISTREMENT VIDÉO
+# CLASSE PRINCIPALE D'ENREGISTREMENT VIDÉO
 # ═══════════════════════════════════════════════════════════════════════════════
-class VideoRecorderEngine:
-    """Gère la file de frames, l'encodage et l'audio."""
 
-    def __init__(self, app):
-        self.app = app
+class VideoRecorder:
+    """
+    Moteur d'enregistrement vidéo avancé.
+    Prend en charge l'écran, la caméra, ou les deux en mode picture-in-picture ou split-screen.
+    """
+
+    def __init__(self, config_manager, status_callback=None, frame_callback=None):
+        self.cfg = config_manager
+        self.status_callback = status_callback
+        self.frame_callback = frame_callback
         self.recording = False
         self.paused = False
         self.start_time = None
-        self.pause_start = None
-        self.total_pause = 0.0
-        self.out = None
-        self.fourcc = cv2.VideoWriter_fourcc(*"XVID")
-        self.fps = 30
-        self.writer_thread = None
-        self.frame_queue = queue.Queue(maxsize=120)
+        self.pause_time = 0
+        self.frames_recorded = 0
+        self.output_path = ""
+        self.audio_path = ""
+        self.video_writer = None
+        self.thread = None
         self.lock = threading.Lock()
-        self.output_path = None
-        self.audio_path = None
-        self.audio_recorder = AudioRecorder()
-        self.audio_enabled = True
-        self.frames_written = 0
-        self.frames_dropped = 0
-        self.session_start = None
+        self.frame_queue = queue.Queue(maxsize=5)
+        self.actual_fps = 0.0
+        self.last_fps_time = time.time()
+        self.fps_counter = 0
+        self.audio_recorder = None
+        self.camera_capture = None
+        self.camera_opened = False
+        self.sct = None
+        self.monitors = list_available_monitors()
+        self.cameras = list_available_cameras()
+        self._stop_event = threading.Event()
 
-    def configure(self, source_mode, fps, quality, output_dir, filename, resolution, audio_enabled):
-        self.source_mode = source_mode
-        self.fps = max(1, min(60, int(fps)))
-        self.output_dir = output_dir
-        self.filename = filename
-        self.resolution = resolution
-        self.audio_enabled = audio_enabled
-        quality_map = {
-            "Basse": ("XVID", 0.5),
-            "Moyenne": ("XVID", 0.75),
-            "Haute": ("mp4v", 0.95),
-            "Ultra": ("H264", 1.0),
-        }
-        codec, _ = quality_map.get(quality, ("XVID", 0.75))
-        if codec == "H264" and not self._has_h264():
-            codec = "mp4v"
-            LOGGER.warn("Codec H264 indisponible — fallback mp4v")
-        self.fourcc = cv2.VideoWriter_fourcc(*codec)
+    def set_status(self, message):
+        logger.info(message)
+        if self.status_callback:
+            self.status_callback(message)
 
-    def _has_h264(self):
+    def open_camera(self, camera_id=None):
+        """Ouvre la caméra sélectionnée."""
+        if camera_id is None:
+            camera_id = self.cfg.get("camera_id", 0)
         try:
-            t = cv2.VideoWriter_fourcc(*"H264")
-            return t > 0
-        except Exception:
+            if self.camera_capture is not None:
+                self.camera_capture.release()
+            backend = cv2.CAP_DSHOW if platform.system() == "Windows" else cv2.CAP_ANY
+            self.camera_capture = cv2.VideoCapture(camera_id, backend)
+            if not self.camera_capture.isOpened():
+                self.set_status(f"[ERREUR] Impossible d'ouvrir la caméra {camera_id}")
+                self.camera_opened = False
+                return False
+            self.camera_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            self.camera_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self.camera_opened = True
+            self.set_status(f"[OK] Caméra {camera_id} ouverte")
+            return True
+        except Exception as e:
+            self.set_status(f"[ERREUR] Caméra {camera_id}: {e}")
+            self.camera_opened = False
             return False
 
-    def start(self):
-        with self.lock:
-            if self.recording:
-                return False
-            ensure_dir(self.output_dir)
-            ts = now_str()
-            base = safe_filename(self.filename)
-            ext = ".avi"
-            self.output_path = os.path.join(self.output_dir, f"{base}_{ts}{ext}")
-            self.audio_path = os.path.join(self.output_dir, f"{base}_{ts}.wav")
+    def close_camera(self):
+        """Ferme la caméra."""
+        if self.camera_capture is not None:
+            self.camera_capture.release()
+            self.camera_capture = None
+        self.camera_opened = False
+        self.set_status("[OK] Caméra fermée")
 
-            size = self.app.get_active_resolution()
-            self.out = cv2.VideoWriter(self.output_path, self.fourcc, self.fps, size)
-            if not self.out.isOpened():
-                LOGGER.error("Impossible d'ouvrir VideoWriter")
-                self.out = None
-                return False
+    def read_camera_frame(self):
+        """Lit une frame depuis la caméra."""
+        if not self.camera_opened or self.camera_capture is None:
+            return None
+        ret, frame = self.camera_capture.read()
+        if ret:
+            return frame
+        return None
 
-            self.recording = True
-            self.paused = False
-            self.start_time = time.time()
-            self.total_pause = 0.0
-            self.frames_written = 0
-            self.frames_dropped = 0
-            self.session_start = datetime.datetime.now().isoformat()
+    def get_screen_resolution(self):
+        """Retourne la résolution de capture selon la configuration."""
+        monitor_id = self.cfg.get("monitor", 0)
+        if monitor_id >= len(self.monitors):
+            monitor_id = 0
+        mon = self.monitors[monitor_id]["rect"]
+        return mon["width"], mon["height"], mon["left"], mon["top"]
 
-            if self.audio_enabled:
-                self.audio_recorder.start()
-
-            self.writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
-            self.writer_thread.start()
-            LOGGER.info(f"Enregistrement démarré : {self.output_path}")
-            return True
-
-    def stop(self):
-        with self.lock:
-            if not self.recording:
-                return None
-            self.recording = False
-            self.paused = False
-
-        if self.writer_thread:
-            self.writer_thread.join(timeout=3)
-
+    def setup_video_writer(self, width, height):
+        """Initialise l'objet VideoWriter d'OpenCV."""
+        codec = self.cfg.get("codec", "mp4v")
+        codecs = get_cv2_codecs()
+        ext = codecs.get(codec, {}).get("ext", "mp4")
+        output_dir = self.cfg.get("output_dir") or get_desktop_path()
+        ensure_dir(output_dir)
+        filename = generate_filename(self.cfg.get("prefix", "HT_REC_"), "", ext)
+        self.output_path = os.path.join(output_dir, filename)
+        fourcc = cv2.VideoWriter_fourcc(*codec)
+        fps = float(self.cfg.get("fps", 30))
+        quality_map = {"low": 0.5, "medium": 1.0, "high": 1.5, "ultra": 2.0}
+        scale = quality_map.get(self.cfg.get("quality", "high"), 1.0)
+        out_w = int(width * scale)
+        out_h = int(height * scale)
+        if out_w % 2 != 0:
+            out_w += 1
+        if out_h % 2 != 0:
+            out_h += 1
         try:
-            if self.out:
-                self.out.release()
-                self.out = None
-        except Exception as exc:
-            LOGGER.error(f"VideoWriter release : {exc}")
+            self.video_writer = cv2.VideoWriter(self.output_path, fourcc, fps, (out_w, out_h))
+            if not self.video_writer.isOpened():
+                self.set_status(f"[ERREUR] Codec {codec} non supporté, fallback vers mp4v")
+                fallback_fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                self.output_path = self.output_path.replace(f".{ext}", ".mp4")
+                self.video_writer = cv2.VideoWriter(self.output_path, fallback_fourcc, fps, (out_w, out_h))
+            self.set_status(f"[OK] Fichier vidéo: {self.output_path} ({out_w}x{out_h} @ {fps}fps)")
+            return out_w, out_h
+        except Exception as e:
+            self.set_status(f"[ERREUR] VideoWriter: {e}")
+            return None, None
 
-        if self.audio_enabled:
-            self.audio_recorder.stop(self.audio_path)
+    def capture_screen(self):
+        """Capture une frame de l'écran avec mss."""
+        try:
+            if self.sct is None:
+                self.sct = mss.mss()
+            monitor_id = self.cfg.get("monitor", 0)
+            if monitor_id >= len(self.monitors):
+                monitor_id = 0
+            monitor = self.monitors[monitor_id]["rect"]
+            screenshot = self.sct.grab(monitor)
+            img = np.array(screenshot)
+            if len(img.shape) == 3 and img.shape[2] == 4:
+                img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+            return img
+        except Exception as e:
+            logger.error(f"Erreur capture écran: {e}")
+            return None
 
-        elapsed = time.time() - self.start_time - self.total_pause if self.start_time else 0
-        self.start_time = None
-        self.session_start = None
+    def take_screenshot(self):
+        """Prend une capture d'écran et la sauvegarde."""
+        try:
+            output_dir = self.cfg.get("output_dir") or get_desktop_path()
+            ensure_dir(output_dir)
+            filename = generate_filename(self.cfg.get("prefix", "HT_REC_"), "_SCREENSHOT", "png")
+            path = os.path.join(output_dir, filename)
+            frame = self.capture_screen()
+            if frame is not None:
+                if self.cfg.get("watermark", True):
+                    frame = draw_hacker_watermark(frame, self.cfg.get("watermark_text", "HACKERS TCHAD"))
+                cv2.imwrite(path, frame)
+                self.set_status(f"[OK] Screenshot sauvegardé: {path}")
+                return path
+        except Exception as e:
+            self.set_status(f"[ERREUR] Screenshot: {e}")
+        return None
 
-        LOGGER.info(f"Enregistrement terminé : {self.output_path}")
-        self.app.on_recording_finished(self.output_path)
-        self.app.update_stats_after_stop(elapsed)
-        return self.output_path
-
-    def toggle_pause(self):
-        if not self.recording:
-            return
-        if self.paused:
-            self.paused = False
-            if self.pause_start:
-                self.total_pause += time.time() - self.pause_start
-            self.pause_start = None
-            LOGGER.info("Enregistrement repris")
-        else:
-            self.paused = True
-            self.pause_start = time.time()
-            LOGGER.info("Enregistrement en pause")
-
-    def get_elapsed(self):
-        if not self.recording or self.start_time is None:
+    def get_duration(self):
+        """Retourne la durée d'enregistrement en secondes."""
+        if self.start_time is None:
             return 0
-        elapsed = time.time() - self.start_time - self.total_pause
-        if self.paused and self.pause_start:
-            elapsed -= (time.time() - self.pause_start)
-        return max(0, elapsed)
+        if self.paused:
+            return self.pause_time - self.start_time
+        return time.time() - self.start_time - self.total_pause_duration()
 
-    def push_frame(self, frame):
+    def total_pause_duration(self):
+        """Calcule le temps total passé en pause."""
+        total = 0.0
+        if hasattr(self, '_pause_start') and self._pause_start is not None:
+            total += time.time() - self._pause_start
+        return getattr(self, '_total_pause', 0.0) + total
+
+    def get_file_size(self):
+        """Retourne la taille actuelle du fichier vidéo."""
+        try:
+            if self.output_path and os.path.exists(self.output_path):
+                return os.path.getsize(self.output_path)
+        except Exception:
+            pass
+        return 0
+
+    def start_recording(self):
+        """Démarre l'enregistrement selon le mode sélectionné."""
+        if self.recording:
+            return False
+        mode = self.cfg.get("mode", "screen")
+        self.frames_recorded = 0
+        self.actual_fps = 0.0
+        self.fps_counter = 0
+        self.last_fps_time = time.time()
+        self.pause_time = 0
+        self._pause_start = None
+        self._total_pause = 0.0
+        self._stop_event.clear()
+
+        if mode == "camera":
+            if not self.open_camera(self.cfg.get("camera_id", 0)):
+                self.set_status("[ERREUR] Impossible d'ouvrir la caméra pour l'enregistrement")
+                return False
+            width = int(self.camera_capture.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1280
+            height = int(self.camera_capture.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+        elif mode == "both":
+            if not self.open_camera(self.cfg.get("camera_id", 0)):
+                self.set_status("[ERREUR] Impossible d'ouvrir la caméra pour le mode combiné")
+                return False
+            sw, sh, _, _ = self.get_screen_resolution()
+            width, height = sw, sh
+        else:
+            sw, sh, _, _ = self.get_screen_resolution()
+            width, height = sw, sh
+
+        out_w, out_h = self.setup_video_writer(width, height)
+        if out_w is None or out_h is None:
+            return False
+
+        self.recording = True
+        self.paused = False
+        self.start_time = time.time()
+        self.audio_path = self.output_path.replace(os.path.splitext(self.output_path)[1], "_audio.wav")
+
+        if self.cfg.get("record_audio", False):
+            self.audio_recorder = AudioRecorder(self.audio_path)
+            self.audio_recorder.start()
+
+        self.thread = threading.Thread(target=self._record_loop, args=(mode, out_w, out_h), daemon=True)
+        self.thread.start()
+        self.set_status(f"[REC] Enregistrement démarré en mode {mode.upper()}")
+        return True
+
+    def _record_loop(self, mode, out_w, out_h):
+        """Boucle principale d'enregistrement vidéo."""
+        fps = float(self.cfg.get("fps", 30))
+        target_frame_time = 1.0 / fps if fps > 0 else 0.033
+        while self.recording and not self._stop_event.is_set():
+            loop_start = time.time()
+            if self.paused:
+                time.sleep(0.1)
+                continue
+
+            frame = None
+            try:
+                if mode == "screen":
+                    frame = self.capture_screen()
+                    if frame is not None:
+                        frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
+                elif mode == "camera":
+                    frame = self.read_camera_frame()
+                    if frame is not None:
+                        frame = cv2.resize(frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
+                elif mode == "both":
+                    screen_frame = self.capture_screen()
+                    cam_frame = self.read_camera_frame()
+                    if screen_frame is not None:
+                        screen_frame = cv2.resize(screen_frame, (out_w, out_h), interpolation=cv2.INTER_AREA)
+                        if cam_frame is not None:
+                            if self.cfg.get("split_screen", False):
+                                frame = make_split_screen(screen_frame, cam_frame)
+                            else:
+                                frame = overlay_camera_on_screen(screen_frame, cam_frame)
+                        else:
+                            frame = screen_frame
+
+                if frame is not None:
+                    elapsed = self.get_duration()
+                    if self.cfg.get("watermark", True):
+                        frame = draw_hacker_watermark(frame, self.cfg.get("watermark_text", "HACKERS TCHAD"))
+                    frame = draw_recording_indicator(frame, elapsed, self.actual_fps)
+                    frame = add_timestamp_overlay(frame)
+                    with self.lock:
+                        if self.video_writer is not None:
+                            self.video_writer.write(frame)
+                    self.frames_recorded += 1
+                    self.fps_counter += 1
+                    if time.time() - self.last_fps_time >= 1.0:
+                        self.actual_fps = self.fps_counter / (time.time() - self.last_fps_time)
+                        self.fps_counter = 0
+                        self.last_fps_time = time.time()
+                    if self.frame_callback:
+                        self.frame_callback(frame, elapsed)
+
+                    auto_stop = self.cfg.get("auto_stop", 0)
+                    if auto_stop > 0 and elapsed >= auto_stop * 60:
+                        self.set_status("[AUTO-STOP] Durée maximale atteinte")
+                        self.stop_recording()
+                        break
+            except Exception as e:
+                logger.error(f"Erreur boucle enregistrement: {e}")
+
+            elapsed_loop = time.time() - loop_start
+            sleep_time = target_frame_time - elapsed_loop
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+
+    def pause_recording(self):
+        """Met l'enregistrement en pause."""
         if not self.recording or self.paused:
             return
-        try:
-            self.frame_queue.put(frame, timeout=0.05)
-        except queue.Full:
-            self.frames_dropped += 1
+        self.paused = True
+        self._pause_start = time.time()
+        self.set_status("[PAUSE] Enregistrement en pause")
 
-    def _writer_loop(self):
-        while self.recording:
-            try:
-                frame = self.frame_queue.get(timeout=0.2)
-            except queue.Empty:
-                continue
-            if frame is None:
-                continue
-            try:
-                if self.out:
-                    self.out.write(frame)
-                    self.frames_written += 1
-            except Exception as exc:
-                LOGGER.error(f"Write frame : {exc}")
-                self.frames_dropped += 1
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# PANNEAU D'APERÇU TKINTER
-# ═══════════════════════════════════════════════════════════════════════════════
-class PreviewPanel(tk.Canvas):
-    """Canvas dédié à l'affichage du flux vidéo."""
-
-    def __init__(self, parent, width=720, height=405, **kwargs):
-        super().__init__(parent, width=width, height=height, **kwargs)
-        self.width = width
-        self.height = height
-        self.image_id = None
-        self.photo = None
-
-    def update_frame(self, pil_image):
-        if pil_image is None:
+    def resume_recording(self):
+        """Reprend l'enregistrement après une pause."""
+        if not self.recording or not self.paused:
             return
-        try:
-            pil_image = pil_image.resize((self.width, self.height), Image.Resampling.LANCZOS)
-            self.photo = ImageTk.PhotoImage(pil_image)
-            if self.image_id is None:
-                self.image_id = self.create_image(0, 0, anchor=tk.NW, image=self.photo)
-            else:
-                self.itemconfig(self.image_id, image=self.photo)
-        except Exception as exc:
-            LOGGER.error(f"Preview update : {exc}")
+        if self._pause_start is not None:
+            self._total_pause += time.time() - self._pause_start
+            self._pause_start = None
+        self.paused = False
+        self.set_status("[REC] Enregistrement repris")
+
+    def stop_recording(self):
+        """Arrête l'enregistrement et libère les ressources."""
+        if not self.recording:
+            return
+        self.recording = False
+        self._stop_event.set()
+        self.set_status("[STOP] Arrêt de l'enregistrement...")
+        if self.thread:
+            self.thread.join(timeout=3.0)
+        with self.lock:
+            if self.video_writer is not None:
+                self.video_writer.release()
+                self.video_writer = None
+        if self.audio_recorder:
+            self.audio_recorder.stop()
+            self.audio_recorder = None
+        if self.sct is not None:
+            try:
+                self.sct.close()
+            except Exception:
+                pass
+            self.sct = None
+        self.set_status(f"[OK] Fichier sauvegardé: {self.output_path}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# APPLICATION PRINCIPALE
+# CLASSE DE PRÉVISUALISATION CAMÉRA
 # ═══════════════════════════════════════════════════════════════════════════════
-class RecorderApp:
-    """Interface principale RECORDER."""
+
+class CameraPreview:
+    """Gère l'aperçu en direct de la caméra dans un canvas Tkinter."""
+
+    def __init__(self, recorder, canvas):
+        self.recorder = recorder
+        self.canvas = canvas
+        self.running = False
+        self.thread = None
+
+    def start(self):
+        if self.running:
+            return
+        self.running = True
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.running = False
+        if self.thread:
+            self.thread.join(timeout=1.0)
+        self.thread = None
+
+    def _loop(self):
+        while self.running:
+            try:
+                frame = self.recorder.read_camera_frame()
+                if frame is not None:
+                    canvas_w = self.canvas.winfo_width()
+                    canvas_h = self.canvas.winfo_height()
+                    if canvas_w > 10 and canvas_h > 10:
+                        resized = resize_keep_aspect(frame, canvas_w, canvas_h)
+                        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+                        img = Image.fromarray(rgb)
+                        imgtk = ImageTk.PhotoImage(image=img)
+                        self.canvas.imgtk = imgtk
+                        self.canvas.create_image(canvas_w // 2, canvas_h // 2, image=imgtk, anchor=tk.CENTER)
+            except Exception as e:
+                logger.error(f"Erreur aperçu caméra: {e}")
+            time.sleep(0.03)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLASSE INTERFACE TKINTER HACKER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class HackerRecorderApp:
+    """Interface graphique principale de l'application."""
 
     def __init__(self, root):
         self.root = root
-        self.root.title(f"{APP_NAME} v{VERSION} — {AUTHOR}")
-        self.config = Config()
-        self.history = []
-        self.last_frame = None
-        self.preview_running = False
-        self.preview_thread = None
-        self.stats_update_id = None
+        self.root.title(f"{APP_NAME} v{APP_VERSION} - {APP_AUTHOR}")
+        self.root.configure(bg=color["bg"])
+        self.root.geometry("1100x800")
+        self.root.minsize(900, 650)
 
-        self.screen_source = ScreenSource()
-        self.camera_source = CameraSource()
-        self.composite = CompositeRenderer()
-        self.engine = VideoRecorderEngine(self)
-
-        self._build_styles()
-        self._build_ui()
-        self._apply_config()
-        self._bind_hotkeys()
-        self._start_clock()
-        self._start_preview()
-
-        LOGGER.add_listener(self._on_log_line)
-        LOGGER.info(f"{APP_NAME} v{VERSION} démarré")
-
-    def _build_styles(self):
-        self.style = ttk.Style(self.root)
+        self.style = ttk.Style()
         self.style.theme_use("clam")
-        self.style.configure("TFrame", background=DEFAULT_BG)
-        self.style.configure("TLabel", background=DEFAULT_BG, foreground=DEFAULT_FG)
-        self.style.configure("TButton", background=ACCENT_DIM, foreground=DEFAULT_FG,
-                             font=(FONT_FAMILY, 9, "bold"))
-        self.style.configure("TNotebook", background=DEFAULT_BG, tabmargins=[2, 5, 2, 0])
-        self.style.configure("TNotebook.Tab", background=ACCENT_DIM, foreground=DEFAULT_FG,
-                             font=(FONT_FAMILY, 9, "bold"), padding=[12, 4])
-        self.style.map("TNotebook.Tab",
-                       background=[("selected", "#005500")],
-                       foreground=[("selected", "#AAFFAA")])
-        self.style.configure("TCombobox", fieldbackground=DEFAULT_BG, foreground=DEFAULT_FG,
-                             selectbackground="#005500", selectforeground=DEFAULT_FG)
-        self.style.configure("TSpinbox", fieldbackground=DEFAULT_BG, foreground=DEFAULT_FG)
-        self.style.configure("Horizontal.TScale", background=DEFAULT_BG, troughcolor=ACCENT_DIM)
+        self.style.configure("TNotebook", background=color["bg2"], foreground=color["fg"], borderwidth=0)
+        self.style.configure("TNotebook.Tab", background=color["bg3"], foreground=color["fg"], font=font["mono_bold"], padding=10)
+        self.style.map("TNotebook.Tab", background=[("selected", color["accent2"])], foreground=[("selected", "white")])
+        self.style.configure("TCombobox", fieldbackground=color["bg3"], background=color["bg3"], foreground=color["fg"])
+        self.style.configure("Horizontal.TProgressbar", background=color["fg"], troughcolor=color["bg3"])
 
-    def _build_ui(self):
-        self.root.configure(bg=DEFAULT_BG)
-        geo = self.config.get("window_geometry", "1280x800+100+50")
-        self.root.geometry(geo)
+        self.config_manager = ConfigManager()
+        if not self.config_manager.get("output_dir"):
+            self.config_manager.set("output_dir", get_desktop_path())
+            self.config_manager.save()
 
-        # En-tête
-        header = tk.Frame(self.root, bg=DEFAULT_BG, height=60)
-        header.pack(fill=tk.X, padx=10, pady=(10, 0))
-        tk.Label(header, text=f"◄ {APP_NAME} v{VERSION} ►",
-                 bg=DEFAULT_BG, fg=DEFAULT_FG,
-                 font=(FONT_FAMILY, 24, "bold")).pack(side=tk.LEFT)
-        tk.Label(header, text=f"by {AUTHOR}",
-                 bg=DEFAULT_BG, fg=ACCENT_RED,
-                 font=(FONT_FAMILY, 12, "italic")).pack(side=tk.LEFT, padx=15)
-        self.clock_label = tk.Label(header, text="", bg=DEFAULT_BG, fg=DEFAULT_FG,
-                                    font=(MONO_FONT, 12))
-        self.clock_label.pack(side=tk.RIGHT)
-
-        # Notebook
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        self.tab_record = tk.Frame(self.notebook, bg=DEFAULT_BG)
-        self.tab_settings = tk.Frame(self.notebook, bg=DEFAULT_BG)
-        self.tab_history = tk.Frame(self.notebook, bg=DEFAULT_BG)
-        self.tab_logs = tk.Frame(self.notebook, bg=DEFAULT_BG)
-        self.tab_about = tk.Frame(self.notebook, bg=DEFAULT_BG)
-
-        self.notebook.add(self.tab_record, text=" ENREGISTREMENT ")
-        self.notebook.add(self.tab_settings, text=" PARAMÈTRES ")
-        self.notebook.add(self.tab_history, text=" HISTORIQUE ")
-        self.notebook.add(self.tab_logs, text=" JOURNAUX ")
-        self.notebook.add(self.tab_about, text=" À PROPOS ")
-
-        self._build_record_tab()
-        self._build_settings_tab()
-        self._build_history_tab()
-        self._build_logs_tab()
-        self._build_about_tab()
-
-        # Barre d'état
-        self.status = tk.Label(self.root, text="Prêt", bg=ACCENT_DIM, fg=DEFAULT_FG,
-                               font=(FONT_FAMILY, 10), anchor=tk.W)
-        self.status.pack(fill=tk.X, side=tk.BOTTOM, ipady=4)
-
-    def _build_record_tab(self):
-        left = tk.Frame(self.tab_record, bg=DEFAULT_BG)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        preview_header = tk.Frame(left, bg=DEFAULT_BG)
-        preview_header.pack(fill=tk.X)
-        tk.Label(preview_header, text="APERÇU EN DIRECT", bg=DEFAULT_BG,
-                 fg=DEFAULT_FG, font=(FONT_FAMILY, 12, "bold")).pack(side=tk.LEFT)
-        self.preview_size_label = tk.Label(preview_header, text="", bg=DEFAULT_BG,
-                                           fg=ACCENT_RED, font=(FONT_FAMILY, 9))
-        self.preview_size_label.pack(side=tk.RIGHT)
-
-        self.preview = PreviewPanel(left, width=720, height=405, bg="black",
-                                    highlightbackground=DEFAULT_FG, highlightthickness=2)
-        self.preview.pack(pady=10, fill=tk.BOTH, expand=True)
-
-        self.timer_display = tk.Label(left, text="00:00:00", bg=DEFAULT_BG,
-                                      fg=DEFAULT_FG, font=(MONO_FONT, 48, "bold"))
-        self.timer_display.pack(pady=5)
-
-        btn_frame = tk.Frame(left, bg=DEFAULT_BG)
-        btn_frame.pack(pady=10)
-
-        self.btn_record = tk.Button(btn_frame, text="▶ ENREGISTRER", bg="#004400",
-                                    fg="white", activebackground="#006600",
-                                    font=(FONT_FAMILY, 12, "bold"), width=16,
-                                    command=self.start_recording)
-        self.btn_record.pack(side=tk.LEFT, padx=5)
-
-        self.btn_pause = tk.Button(btn_frame, text="⏸ PAUSE", bg="#444400",
-                                   fg="white", activebackground="#666600",
-                                   font=(FONT_FAMILY, 12, "bold"), width=12,
-                                   command=self.pause_recording)
-        self.btn_pause.pack(side=tk.LEFT, padx=5)
-
-        self.btn_stop = tk.Button(btn_frame, text="■ ARRÊTER", bg="#550000",
-                                  fg="white", activebackground="#770000",
-                                  font=(FONT_FAMILY, 12, "bold"), width=12,
-                                  command=self.stop_recording)
-        self.btn_stop.pack(side=tk.LEFT, padx=5)
-
-        self.btn_screenshot = tk.Button(btn_frame, text="📷 CAPTURE", bg="#003333",
-                                        fg="white", activebackground="#005555",
-                                        font=(FONT_FAMILY, 12, "bold"), width=12,
-                                        command=self.take_screenshot)
-        self.btn_screenshot.pack(side=tk.LEFT, padx=5)
-
-        right = tk.Frame(self.tab_record, bg=DEFAULT_BG)
-        right.pack(side=tk.RIGHT, fill=tk.Y, padx=10, pady=10)
-
-        mode_box = tk.LabelFrame(right, text=" MODE SOURCE ", bg=DEFAULT_BG,
-                                 fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        mode_box.pack(fill=tk.X, pady=5)
-        self.mode_var = tk.StringVar()
-        self.mode_combo = ttk.Combobox(mode_box, textvariable=self.mode_var,
-                                       values=CompositeRenderer.MODES, state="readonly", width=28)
-        self.mode_combo.pack(padx=8, pady=8, fill=tk.X)
-        self.mode_combo.bind("<<ComboboxSelected>>", self._on_mode_changed)
-
-        cam_box = tk.LabelFrame(right, text=" CAMÉRA ", bg=DEFAULT_BG,
-                                fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        cam_box.pack(fill=tk.X, pady=5)
-        self.btn_cam_toggle = tk.Button(cam_box, text="OUVRIR CAMÉRA", bg="#003300",
-                                        fg="white", command=self.toggle_camera)
-        self.btn_cam_toggle.pack(padx=8, pady=8, fill=tk.X)
-        self.cam_status = tk.Label(cam_box, text="Caméra fermée", bg=DEFAULT_BG,
-                                   fg=ACCENT_RED, font=(FONT_FAMILY, 9))
-        self.cam_status.pack()
-
-        qual_box = tk.LabelFrame(right, text=" QUALITÉ & FPS ", bg=DEFAULT_BG,
-                                 fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        qual_box.pack(fill=tk.X, pady=5)
-        tk.Label(qual_box, text="FPS:", bg=DEFAULT_BG, fg=DEFAULT_FG).pack(anchor=tk.W, padx=8)
-        self.fps_var = tk.IntVar(value=30)
-        tk.Spinbox(qual_box, from_=1, to=60, textvariable=self.fps_var, width=10,
-                   bg=DEFAULT_BG, fg=DEFAULT_FG, buttonbackground=ACCENT_DIM).pack(padx=8, pady=2)
-        tk.Label(qual_box, text="Qualité:", bg=DEFAULT_BG, fg=DEFAULT_FG).pack(anchor=tk.W, padx=8)
-        self.quality_var = tk.StringVar(value="Haute")
-        ttk.Combobox(qual_box, textvariable=self.quality_var,
-                     values=["Basse", "Moyenne", "Haute", "Ultra"], state="readonly").pack(padx=8, pady=2)
-
-        timer_box = tk.LabelFrame(right, text=" MINUTERIE ", bg=DEFAULT_BG,
-                                  fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        timer_box.pack(fill=tk.X, pady=5)
-        self.timer_enabled = tk.BooleanVar(value=False)
-        tk.Checkbutton(timer_box, text="Activer", variable=self.timer_enabled,
-                       bg=DEFAULT_BG, fg=DEFAULT_FG, selectcolor=ACCENT_DIM).pack(anchor=tk.W, padx=8)
-        tk.Label(timer_box, text="Durée (min):", bg=DEFAULT_BG, fg=DEFAULT_FG).pack(anchor=tk.W, padx=8)
-        self.timer_min_var = tk.IntVar(value=5)
-        tk.Spinbox(timer_box, from_=1, to=180, textvariable=self.timer_min_var, width=10,
-                   bg=DEFAULT_BG, fg=DEFAULT_FG, buttonbackground=ACCENT_DIM).pack(padx=8, pady=2)
-
-        overlay_box = tk.LabelFrame(right, text=" OVERLAY ", bg=DEFAULT_BG,
-                                    fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        overlay_box.pack(fill=tk.X, pady=5)
-        self.overlay_var = tk.StringVar(value="HACKERS TCHAD")
-        tk.Entry(overlay_box, textvariable=self.overlay_var, bg=DEFAULT_BG, fg=DEFAULT_FG,
-                 insertbackground=DEFAULT_FG, font=(FONT_FAMILY, 9)).pack(padx=8, pady=8, fill=tk.X)
-
-        stats_box = tk.LabelFrame(right, text=" STATISTIQUES ", bg=DEFAULT_BG,
-                                  fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        stats_box.pack(fill=tk.X, pady=5)
-        self.stats_label = tk.Label(stats_box, text="Aucune session", bg=DEFAULT_BG,
-                                    fg=DEFAULT_FG, font=(MONO_FONT, 9), justify=tk.LEFT)
-        self.stats_label.pack(padx=8, pady=8, anchor=tk.W)
-
-    def _build_settings_tab(self):
-        container = tk.Frame(self.tab_settings, bg=DEFAULT_BG)
-        container.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
-
-        left = tk.Frame(container, bg=DEFAULT_BG)
-        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        right = tk.Frame(container, bg=DEFAULT_BG)
-        right.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
-
-        out_box = tk.LabelFrame(left, text=" DOSSIER DE SORTIE ", bg=DEFAULT_BG,
-                                fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        out_box.pack(fill=tk.X, pady=5)
-        self.output_dir_var = tk.StringVar(value=get_desktop_path())
-        tk.Entry(out_box, textvariable=self.output_dir_var, bg=DEFAULT_BG, fg=DEFAULT_FG,
-                 insertbackground=DEFAULT_FG).pack(padx=8, pady=5, fill=tk.X)
-        tk.Button(out_box, text="Parcourir...", bg=ACCENT_DIM, fg=DEFAULT_FG,
-                  command=self._browse_output_dir).pack(padx=8, pady=5, anchor=tk.E)
-
-        name_box = tk.LabelFrame(left, text=" NOM DE FICHIER ", bg=DEFAULT_BG,
-                                 fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        name_box.pack(fill=tk.X, pady=5)
-        self.filename_var = tk.StringVar(value="RECORDER_capture")
-        tk.Entry(name_box, textvariable=self.filename_var, bg=DEFAULT_BG, fg=DEFAULT_FG,
-                 insertbackground=DEFAULT_FG).pack(padx=8, pady=8, fill=tk.X)
-
-        res_box = tk.LabelFrame(left, text=" RÉSOLUTION ", bg=DEFAULT_BG,
-                                fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        res_box.pack(fill=tk.X, pady=5)
-        self.resolution_var = tk.StringVar(value="1920x1080")
-        ttk.Combobox(res_box, textvariable=self.resolution_var,
-                     values=["1280x720", "1920x1080", "2560x1440", "3840x2160",
-                             "Caméra native", "Écran native"], state="readonly").pack(padx=8, pady=8, fill=tk.X)
-
-        mon_box = tk.LabelFrame(left, text=" MONITEUR ", bg=DEFAULT_BG,
-                                fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        mon_box.pack(fill=tk.X, pady=5)
-        self.monitor_var = tk.StringVar(value="0")
-        self.monitor_combo = ttk.Combobox(mon_box, textvariable=self.monitor_var,
-                                          values=self.screen_source.list_monitors(), state="readonly")
-        self.monitor_combo.pack(padx=8, pady=8, fill=tk.X)
-
-        theme_box = tk.LabelFrame(left, text=" THÈME ", bg=DEFAULT_BG,
-                                  fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        theme_box.pack(fill=tk.X, pady=5)
-        self.theme_var = tk.StringVar(value="green")
-        ttk.Combobox(theme_box, textvariable=self.theme_var,
-                     values=["green", "red", "blue", "amber"], state="readonly").pack(padx=8, pady=8, fill=tk.X)
-
-        pip_box = tk.LabelFrame(right, text=" PARAMÈTRES PIP ", bg=DEFAULT_BG,
-                                fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        pip_box.pack(fill=tk.X, pady=5)
-        tk.Label(pip_box, text="Position:", bg=DEFAULT_BG, fg=DEFAULT_FG).pack(anchor=tk.W, padx=8)
-        self.pip_pos_var = tk.StringVar(value="bottom-right")
-        ttk.Combobox(pip_box, textvariable=self.pip_pos_var,
-                     values=["top-left", "top-right", "bottom-left", "bottom-right"],
-                     state="readonly").pack(padx=8, pady=2, fill=tk.X)
-        tk.Label(pip_box, text="Échelle:", bg=DEFAULT_BG, fg=DEFAULT_FG).pack(anchor=tk.W, padx=8)
-        self.pip_scale_var = tk.DoubleVar(value=0.25)
-        tk.Scale(pip_box, from_=0.1, to=0.6, resolution=0.05, orient=tk.HORIZONTAL,
-                 variable=self.pip_scale_var, bg=DEFAULT_BG, fg=DEFAULT_FG,
-                 highlightthickness=0, troughcolor=ACCENT_DIM).pack(padx=8, pady=2, fill=tk.X)
-        tk.Label(pip_box, text="Forme:", bg=DEFAULT_BG, fg=DEFAULT_FG).pack(anchor=tk.W, padx=8)
-        self.webcam_shape_var = tk.StringVar(value="rectangle")
-        ttk.Combobox(pip_box, textvariable=self.webcam_shape_var,
-                     values=["rectangle", "rounded", "circle"], state="readonly").pack(padx=8, pady=2, fill=tk.X)
-
-        disp_box = tk.LabelFrame(right, text=" OPTIONS D'AFFICHAGE ", bg=DEFAULT_BG,
-                                 fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        disp_box.pack(fill=tk.X, pady=5)
-        self.watermark_var = tk.BooleanVar(value=True)
-        self.timestamp_var = tk.BooleanVar(value=True)
-        self.rec_indicator_var = tk.BooleanVar(value=True)
-        self.audio_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(disp_box, text="Watermark", variable=self.watermark_var,
-                       bg=DEFAULT_BG, fg=DEFAULT_FG, selectcolor=ACCENT_DIM).pack(anchor=tk.W, padx=8)
-        tk.Checkbutton(disp_box, text="Horodatage", variable=self.timestamp_var,
-                       bg=DEFAULT_BG, fg=DEFAULT_FG, selectcolor=ACCENT_DIM).pack(anchor=tk.W, padx=8)
-        tk.Checkbutton(disp_box, text="Indicateur REC", variable=self.rec_indicator_var,
-                       bg=DEFAULT_BG, fg=DEFAULT_FG, selectcolor=ACCENT_DIM).pack(anchor=tk.W, padx=8)
-        tk.Checkbutton(disp_box, text="Audio micro", variable=self.audio_var,
-                       bg=DEFAULT_BG, fg=DEFAULT_FG, selectcolor=ACCENT_DIM).pack(anchor=tk.W, padx=8)
-
-        hot_box = tk.LabelFrame(right, text=" RACCOURCIS CLAVIER ", bg=DEFAULT_BG,
-                                fg=DEFAULT_FG, font=(FONT_FAMILY, 10, "bold"))
-        hot_box.pack(fill=tk.X, pady=5)
-        tk.Label(hot_box,
-                 text="F9 = Enregistrer\nF10 = Arrêter\nF11 = Pause\nF12 = Capture",
-                 bg=DEFAULT_BG, fg=DEFAULT_FG, font=(MONO_FONT, 9), justify=tk.LEFT).pack(padx=8, pady=8, anchor=tk.W)
-
-        tk.Button(container, text="💾 SAUVEGARDER LES PARAMÈTRES", bg="#004400",
-                  fg="white", font=(FONT_FAMILY, 12, "bold"),
-                  command=self._save_settings).pack(side=tk.BOTTOM, fill=tk.X, pady=10)
-
-    def _build_history_tab(self):
-        top = tk.Frame(self.tab_history, bg=DEFAULT_BG)
-        top.pack(fill=tk.X, padx=10, pady=5)
-        tk.Label(top, text="FICHIERS ENREGISTRÉS", bg=DEFAULT_BG, fg=DEFAULT_FG,
-                 font=(FONT_FAMILY, 12, "bold")).pack(side=tk.LEFT)
-        tk.Button(top, text="Rafraîchir", bg=ACCENT_DIM, fg=DEFAULT_FG,
-                  command=self._refresh_history).pack(side=tk.RIGHT)
-        tk.Button(top, text="Ouvrir dossier", bg=ACCENT_DIM, fg=DEFAULT_FG,
-                  command=self._open_output_dir).pack(side=tk.RIGHT, padx=5)
-
-        self.history_list = tk.Listbox(self.tab_history, bg=DEFAULT_BG, fg=DEFAULT_FG,
-                                       selectbackground="#005500", font=(MONO_FONT, 10))
-        self.history_list.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        self.history_list.bind("<Double-Button-1>", self._on_history_double)
-
-    def _build_logs_tab(self):
-        top = tk.Frame(self.tab_logs, bg=DEFAULT_BG)
-        top.pack(fill=tk.X, padx=10, pady=5)
-        tk.Label(top, text="JOURNAUX SYSTÈME", bg=DEFAULT_BG, fg=DEFAULT_FG,
-                 font=(FONT_FAMILY, 12, "bold")).pack(side=tk.LEFT)
-        tk.Button(top, text="Effacer", bg=ACCENT_DIM, fg=DEFAULT_FG,
-                  command=self._clear_logs).pack(side=tk.RIGHT)
-        self.log_text = tk.Text(self.tab_logs, bg=DEFAULT_BG, fg=DEFAULT_FG,
-                                insertbackground=DEFAULT_FG, font=(MONO_FONT, 9),
-                                state=tk.DISABLED)
-        self.log_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-
-    def _build_about_tab(self):
-        frame = tk.Frame(self.tab_about, bg=DEFAULT_BG)
-        frame.pack(expand=True)
-        tk.Label(frame, text=APP_NAME, bg=DEFAULT_BG, fg=DEFAULT_FG,
-                 font=(FONT_FAMILY, 36, "bold")).pack(pady=10)
-        tk.Label(frame, text=f"Version {VERSION}", bg=DEFAULT_BG, fg=DEFAULT_FG,
-                 font=(FONT_FAMILY, 14)).pack()
-        tk.Label(frame, text=f"Développé par {AUTHOR}", bg=DEFAULT_BG, fg=ACCENT_RED,
-                 font=(FONT_FAMILY, 14, "bold")).pack(pady=10)
-        info = (
-            "RECORDER est un outil avancé de capture d'écran et de webcam.\n"
-            "Interface cyberpunk green/red, minuterie, overlays, rendu PiP,\n"
-            "raccourcis clavier, historique et encodage haute qualité.\n"
-            "Les vidéos sont enregistrées directement sur le Bureau par défaut."
+        self.recorder = VideoRecorder(
+            self.config_manager,
+            status_callback=self.log_status,
+            frame_callback=self.on_frame_recorded
         )
-        tk.Label(frame, text=info, bg=DEFAULT_BG, fg="#AAAAAA",
-                 font=(FONT_FAMILY, 11), justify=tk.CENTER).pack(pady=20)
+        self.camera_preview = None
+        self.preview_active = False
+        self.elapsed_seconds = 0
+        self.status_history = deque(maxlen=100)
 
-    def _apply_config(self):
-        cfg = self.config
-        self.output_dir_var.set(cfg.get("output_dir", get_desktop_path()))
-        self.filename_var.set(cfg.get("filename", "RECORDER_capture"))
-        self.fps_var.set(cfg.get("fps", 30))
-        self.quality_var.set(cfg.get("quality", "Haute"))
-        self.mode_var.set(cfg.get("mode", "Écran seul"))
-        self.resolution_var.set(cfg.get("resolution", "1920x1080"))
-        self.monitor_var.set(str(cfg.get("monitor", 0)))
-        self.pip_pos_var.set(cfg.get("pip_position", "bottom-right"))
-        self.pip_scale_var.set(cfg.get("pip_scale", 0.25))
-        self.webcam_shape_var.set(cfg.get("webcam_shape", "rectangle"))
-        self.watermark_var.set(cfg.get("show_watermark", True))
-        self.timestamp_var.set(cfg.get("show_timestamp", True))
-        self.rec_indicator_var.set(cfg.get("show_rec_indicator", True))
-        self.audio_var.set(cfg.get("audio_enabled", True))
-        self.overlay_var.set(cfg.get("overlay_text", "HACKERS TCHAD"))
-        self.theme_var.set(cfg.get("theme", "green"))
-        self.timer_enabled.set(cfg.get("timer_enabled", False))
-        self.timer_min_var.set(cfg.get("timer_minutes", 5))
-        self._apply_theme()
-        self._on_mode_changed(None)
+        self.build_ui()
+        self.refresh_devices()
+        self.setup_hotkeys()
+        self.update_clock()
+        self.update_timer()
+        self.update_system_stats()
+        self.log_status("[OK] Application HACKERS TCHAD RECORDER démarrée")
 
-    def _apply_theme(self):
-        theme = self.theme_var.get()
-        themes = {
-            "green": ("#00FF41", "#003B00"),
-            "red": ("#FF1A1A", "#3B0000"),
-            "blue": ("#00CCFF", "#001A3B"),
-            "amber": ("#FFBF00", "#3B2800"),
-        }
-        fg, dim = themes.get(theme, (DEFAULT_FG, ACCENT_DIM))
-        self.root.configure(bg=DEFAULT_BG)
-        self.style.configure("TLabel", background=DEFAULT_BG, foreground=fg)
-        self.style.configure("TButton", background=dim, foreground=fg)
-        self.style.configure("TNotebook.Tab", background=dim, foreground=fg)
-        self.style.map("TNotebook.Tab",
-                       background=[("selected", "#005500")],
-                       foreground=[("selected", "#AAFFAA")])
-        self.status.configure(bg=dim, fg=fg)
+    def build_ui(self):
+        """Construit l'interface utilisateur complète."""
+        self.main_frame = tk.Frame(self.root, bg=color["bg"])
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-    def _save_settings(self):
-        self.config.set("output_dir", self.output_dir_var.get())
-        self.config.set("filename", self.filename_var.get())
-        self.config.set("fps", self.fps_var.get())
-        self.config.set("quality", self.quality_var.get())
-        self.config.set("mode", self.mode_var.get())
-        self.config.set("resolution", self.resolution_var.get())
-        try:
-            self.config.set("monitor", int(self.monitor_var.get().split(":")[0]))
-        except Exception:
-            self.config.set("monitor", 0)
-        self.config.set("pip_position", self.pip_pos_var.get())
-        self.config.set("pip_scale", self.pip_scale_var.get())
-        self.config.set("webcam_shape", self.webcam_shape_var.get())
-        self.config.set("show_watermark", self.watermark_var.get())
-        self.config.set("show_timestamp", self.timestamp_var.get())
-        self.config.set("show_rec_indicator", self.rec_indicator_var.get())
-        self.config.set("audio_enabled", self.audio_var.get())
-        self.config.set("overlay_text", self.overlay_var.get())
-        self.config.set("theme", self.theme_var.get())
-        self.config.set("timer_enabled", self.timer_enabled.get())
-        self.config.set("timer_minutes", self.timer_min_var.get())
-        self.config.set("window_geometry", self.root.geometry())
-        self.config.save()
-        self._apply_theme()
-        self._update_screen_source()
-        self.status.config(text="Paramètres sauvegardés")
-        LOGGER.info("Paramètres sauvegardés")
+        self.build_header()
 
-    def _browse_output_dir(self):
-        path = filedialog.askdirectory(initialdir=self.output_dir_var.get())
-        if path:
-            self.output_dir_var.set(path)
+        self.notebook = ttk.Notebook(self.main_frame)
+        self.notebook.pack(fill=tk.BOTH, expand=True, pady=10)
 
-    def _bind_hotkeys(self):
-        self.root.bind("<F9>", lambda e: self.start_recording())
-        self.root.bind("<F10>", lambda e: self.stop_recording())
-        self.root.bind("<F11>", lambda e: self.pause_recording())
-        self.root.bind("<F12>", lambda e: self.take_screenshot())
+        self.tab_record = tk.Frame(self.notebook, bg=color["bg2"])
+        self.tab_camera = tk.Frame(self.notebook, bg=color["bg2"])
+        self.tab_settings = tk.Frame(self.notebook, bg=color["bg2"])
+        self.tab_logs = tk.Frame(self.notebook, bg=color["bg2"])
+        self.tab_about = tk.Frame(self.notebook, bg=color["bg2"])
 
-    def _start_clock(self):
-        self.clock_label.config(text=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        self.root.after(1000, self._start_clock)
+        self.notebook.add(self.tab_record, text=" ⏺ ENREGISTRER ")
+        self.notebook.add(self.tab_camera, text=" 📷 CAMÉRA ")
+        self.notebook.add(self.tab_settings, text=" ⚙ PARAMÈTRES ")
+        self.notebook.add(self.tab_logs, text=" 🖥 LOGS ")
+        self.notebook.add(self.tab_about, text=" ℹ À PROPOS ")
 
-    def _on_log_line(self, line):
-        def update():
-            self.log_text.config(state=tk.NORMAL)
-            self.log_text.insert(tk.END, line + "\n")
-            self.log_text.see(tk.END)
-            self.log_text.config(state=tk.DISABLED)
-        self.root.after(0, update)
+        self.build_record_tab()
+        self.build_camera_tab()
+        self.build_settings_tab()
+        self.build_logs_tab()
+        self.build_about_tab()
+        self.build_footer()
 
-    def _clear_logs(self):
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.delete("1.0", tk.END)
-        self.log_text.config(state=tk.DISABLED)
+    def build_header(self):
+        """Crée l'en-tête avec le titre et l'horloge."""
+        header = tk.Frame(self.main_frame, bg=color["bg2"], highlightbackground=color["border"], highlightthickness=1)
+        header.pack(fill=tk.X, pady=(0, 10))
 
-    def _on_mode_changed(self, event):
+        title = tk.Label(header, text=f"◄ {APP_NAME} ►", bg=color["bg2"], fg=color["fg"], font=font["title"])
+        title.pack(side=tk.LEFT, padx=20, pady=10)
+
+        subtitle = tk.Label(header, text=f"by {APP_AUTHOR} | v{APP_VERSION}", bg=color["bg2"], fg=color["accent"], font=font["mono"])
+        subtitle.pack(side=tk.LEFT, padx=10, pady=10)
+
+        self.clock_label = tk.Label(header, text="00:00:00", bg=color["bg2"], fg=color["info"], font=font["big"])
+        self.clock_label.pack(side=tk.RIGHT, padx=20, pady=10)
+
+    def build_record_tab(self):
+        """Construit l'onglet principal d'enregistrement."""
+        top = tk.Frame(self.tab_record, bg=color["bg2"], highlightbackground=color["border"], highlightthickness=1)
+        top.pack(fill=tk.X, padx=5, pady=5)
+
+        tk.Label(top, text="[ CONTRÔLES D'ENREGISTREMENT ]", bg=color["bg2"], fg=color["accent"],
+                 font=font["mono_bold"]).pack(pady=10)
+
+        controls = tk.Frame(top, bg=color["bg2"])
+        controls.pack(pady=10)
+
+        self.btn_record = tk.Button(controls, text="⏺ ENREGISTRER", bg=color["accent2"], fg="white",
+                                    font=font["mono_bold"], width=18, height=2, command=self.start_recording)
+        self.btn_record.pack(side=tk.LEFT, padx=10)
+
+        self.btn_stop = tk.Button(controls, text="⏹ ARRÊTER", bg=color["bg3"], fg=color["fg"],
+                                  font=font["mono_bold"], width=18, height=2, command=self.stop_recording)
+        self.btn_stop.pack(side=tk.LEFT, padx=10)
+
+        self.btn_pause = tk.Button(controls, text="⏸ PAUSE", bg=color["bg3"], fg=color["fg"],
+                                   font=font["mono_bold"], width=18, height=2, command=self.toggle_pause)
+        self.btn_pause.pack(side=tk.LEFT, padx=10)
+
+        self.btn_screenshot = tk.Button(controls, text="📸 SCREENSHOT", bg=color["bg3"], fg=color["info"],
+                                        font=font["mono_bold"], width=18, height=2, command=self.take_screenshot)
+        self.btn_screenshot.pack(side=tk.LEFT, padx=10)
+
+        # Mode d'enregistrement
+        mode_frame = tk.Frame(top, bg=color["bg2"])
+        mode_frame.pack(pady=10)
+
+        tk.Label(mode_frame, text="MODE:", bg=color["bg2"], fg=color["fg"], font=font["mono_bold"]).pack(side=tk.LEFT, padx=5)
+        self.mode_var = tk.StringVar(value=self.config_manager.get("mode", "screen"))
+        for m, label in [("screen", "📺 ÉCRAN"), ("camera", "📷 CAMÉRA"), ("both", "📺+📷 LES DEUX")]:
+            tk.Radiobutton(mode_frame, text=label, variable=self.mode_var, value=m,
+                           bg=color["bg2"], fg=color["fg"], selectcolor=color["bg3"], font=font["mono"],
+                           command=self.on_mode_changed).pack(side=tk.LEFT, padx=10)
+
+        self.split_var = tk.BooleanVar(value=self.config_manager.get("split_screen", False))
+        tk.Checkbutton(mode_frame, text="Split-screen", variable=self.split_var,
+                       bg=color["bg2"], fg=color["fg"], selectcolor=color["bg3"], font=font["mono"],
+                       command=self.save_settings).pack(side=tk.LEFT, padx=20)
+
+        self.preview_var = tk.BooleanVar(value=self.config_manager.get("show_preview", True))
+        tk.Checkbutton(mode_frame, text="Prévisualisation", variable=self.preview_var,
+                       bg=color["bg2"], fg=color["fg"], selectcolor=color["bg3"], font=font["mono"],
+                       command=self.save_settings).pack(side=tk.LEFT, padx=10)
+
+        # Timer et stats
+        timer_frame = tk.Frame(top, bg=color["bg2"])
+        timer_frame.pack(pady=10)
+
+        tk.Label(timer_frame, text="DURÉE:", bg=color["bg2"], fg=color["fg"], font=font["mono_bold"]).pack(side=tk.LEFT, padx=5)
+        self.timer_label = tk.Label(timer_frame, text="00:00:00", bg=color["bg2"], fg=color["accent"], font=font["huge"])
+        self.timer_label.pack(side=tk.LEFT, padx=20)
+
+        self.stats_label = tk.Label(timer_frame, text="FPS: 0.0\nFrames: 0\nTaille: 0 B",
+                                    bg=color["bg2"], fg=color["info"], font=font["mono"], justify=tk.LEFT)
+        self.stats_label.pack(side=tk.LEFT, padx=30)
+
+        # Zone de prévisualisation
+        bottom = tk.Frame(self.tab_record, bg=color["bg2"], highlightbackground=color["border"], highlightthickness=1)
+        bottom.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        tk.Label(bottom, text="[ APERÇU EN DIRECT ]", bg=color["bg2"], fg=color["accent"],
+                 font=font["mono_bold"]).pack(pady=5)
+
+        self.preview_canvas = tk.Canvas(bottom, bg="black", highlightbackground=color["border"], highlightthickness=2)
+        self.preview_canvas.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    def build_camera_tab(self):
+        """Construit l'onglet de gestion de la caméra."""
+        top = tk.Frame(self.tab_camera, bg=color["bg2"], highlightbackground=color["border"], highlightthickness=1)
+        top.pack(fill=tk.X, padx=5, pady=5)
+
+        tk.Label(top, text="[ CONTRÔLES CAMÉRA ]", bg=color["bg2"], fg=color["accent"],
+                 font=font["mono_bold"]).pack(pady=10)
+
+        controls = tk.Frame(top, bg=color["bg2"])
+        controls.pack(pady=10)
+
+        tk.Label(controls, text="CAMÉRA:", bg=color["bg2"], fg=color["fg"], font=font["mono_bold"]).pack(side=tk.LEFT, padx=5)
+        self.camera_var = tk.StringVar()
+        self.camera_combo = ttk.Combobox(controls, textvariable=self.camera_var, state="readonly", width=45, font=font["mono"])
+        self.camera_combo.pack(side=tk.LEFT, padx=5)
+
+        tk.Button(controls, text="🔄 RAFRAÎCHIR", bg=color["bg3"], fg=color["fg"], font=font["mono_bold"],
+                  command=self.refresh_cameras).pack(side=tk.LEFT, padx=10)
+        tk.Button(controls, text="▶ OUVRIR", bg=color["accent2"], fg="white", font=font["mono_bold"],
+                  command=self.open_selected_camera).pack(side=tk.LEFT, padx=10)
+        tk.Button(controls, text="⏹ FERMER", bg=color["bg3"], fg=color["warn"], font=font["mono_bold"],
+                  command=self.close_camera).pack(side=tk.LEFT, padx=10)
+
+        bottom = tk.Frame(self.tab_camera, bg=color["bg2"], highlightbackground=color["border"], highlightthickness=1)
+        bottom.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        tk.Label(bottom, text="[ APERÇU CAMÉRA ]", bg=color["bg2"], fg=color["accent"],
+                 font=font["mono_bold"]).pack(pady=10)
+
+        self.camera_canvas = tk.Canvas(bottom, bg="black", highlightbackground=color["border"], highlightthickness=2)
+        self.camera_canvas.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        self.camera_preview = CameraPreview(self.recorder, self.camera_canvas)
+
+    def build_settings_tab(self):
+        """Construit l'onglet des paramètres."""
+        container = tk.Frame(self.tab_settings, bg=color["bg2"], highlightbackground=color["border"], highlightthickness=1)
+        container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        tk.Label(container, text="[ PARAMÈTRES AVANCÉS ]", bg=color["bg2"], fg=color["accent"],
+                 font=font["mono_bold"]).pack(pady=10)
+
+        grid = tk.Frame(container, bg=color["bg2"])
+        grid.pack(padx=20, pady=10, fill=tk.X)
+
+        tk.Label(grid, text="FPS:", bg=color["bg2"], fg=color["fg"], font=font["mono"]).grid(row=0, column=0, sticky=tk.W, pady=5)
+        self.fps_var = tk.StringVar(value=str(self.config_manager.get("fps", 30)))
+        fps_combo = ttk.Combobox(grid, textvariable=self.fps_var, values=["15", "24", "30", "60", "120"], width=10, font=font["mono"])
+        fps_combo.grid(row=0, column=1, sticky=tk.W, padx=5, pady=5)
+        fps_combo.bind("<<ComboboxSelected>>", self.save_settings)
+
+        tk.Label(grid, text="QUALITÉ:", bg=color["bg2"], fg=color["fg"], font=font["mono"]).grid(row=1, column=0, sticky=tk.W, pady=5)
+        self.quality_var = tk.StringVar(value=self.config_manager.get("quality", "high"))
+        quality_combo = ttk.Combobox(grid, textvariable=self.quality_var, values=["low", "medium", "high", "ultra"], width=10, font=font["mono"])
+        quality_combo.grid(row=1, column=1, sticky=tk.W, padx=5, pady=5)
+        quality_combo.bind("<<ComboboxSelected>>", self.save_settings)
+
+        tk.Label(grid, text="CODEC:", bg=color["bg2"], fg=color["fg"], font=font["mono"]).grid(row=2, column=0, sticky=tk.W, pady=5)
+        self.codec_var = tk.StringVar(value=self.config_manager.get("codec", "mp4v"))
+        codec_combo = ttk.Combobox(grid, textvariable=self.codec_var, values=list(get_cv2_codecs().keys()), width=10, font=font["mono"])
+        codec_combo.grid(row=2, column=1, sticky=tk.W, padx=5, pady=5)
+        codec_combo.bind("<<ComboboxSelected>>", self.save_settings)
+
+        tk.Label(grid, text="MONITEUR:", bg=color["bg2"], fg=color["fg"], font=font["mono"]).grid(row=3, column=0, sticky=tk.W, pady=5)
+        self.monitor_var = tk.StringVar()
+        self.monitor_combo = ttk.Combobox(grid, textvariable=self.monitor_var, state="readonly", width=45, font=font["mono"])
+        self.monitor_combo.grid(row=3, column=1, sticky=tk.W, padx=5, pady=5)
+        self.monitor_combo.bind("<<ComboboxSelected>>", self.on_monitor_changed)
+
+        tk.Label(grid, text="DOSSIER:", bg=color["bg2"], fg=color["fg"], font=font["mono"]).grid(row=4, column=0, sticky=tk.W, pady=5)
+        out_frame = tk.Frame(grid, bg=color["bg2"])
+        out_frame.grid(row=4, column=1, sticky=tk.W, padx=5, pady=5)
+        self.output_entry = tk.Entry(out_frame, width=40, bg=color["bg3"], fg=color["fg"], insertbackground=color["fg"], font=font["mono"])
+        self.output_entry.pack(side=tk.LEFT)
+        self.output_entry.insert(0, self.config_manager.get("output_dir", get_desktop_path()))
+        tk.Button(out_frame, text="PARCOURIR", bg=color["bg3"], fg=color["fg"], font=font["mono_bold"],
+                  command=self.choose_output_dir).pack(side=tk.LEFT, padx=5)
+
+        tk.Label(grid, text="PRÉFIXE:", bg=color["bg2"], fg=color["fg"], font=font["mono"]).grid(row=5, column=0, sticky=tk.W, pady=5)
+        self.prefix_var = tk.StringVar(value=self.config_manager.get("prefix", "HT_REC_"))
+        prefix_entry = tk.Entry(grid, textvariable=self.prefix_var, width=20, bg=color["bg3"], fg=color["fg"],
+                                insertbackground=color["fg"], font=font["mono"])
+        prefix_entry.grid(row=5, column=1, sticky=tk.W, padx=5, pady=5)
+        prefix_entry.bind("<KeyRelease>", self.save_settings)
+
+        self.watermark_var = tk.BooleanVar(value=self.config_manager.get("watermark", True))
+        tk.Checkbutton(grid, text="Watermark", variable=self.watermark_var,
+                       bg=color["bg2"], fg=color["fg"], selectcolor=color["bg3"], font=font["mono"],
+                       command=self.save_settings).grid(row=6, column=0, sticky=tk.W, pady=5)
+        self.watermark_text_var = tk.StringVar(value=self.config_manager.get("watermark_text", "HACKERS TCHAD"))
+        wm_entry = tk.Entry(grid, textvariable=self.watermark_text_var, width=30, bg=color["bg3"], fg=color["fg"],
+                            insertbackground=color["fg"], font=font["mono"])
+        wm_entry.grid(row=6, column=1, sticky=tk.W, padx=5, pady=5)
+        wm_entry.bind("<KeyRelease>", self.save_settings)
+
+        self.cursor_var = tk.BooleanVar(value=self.config_manager.get("cursor", True))
+        tk.Checkbutton(grid, text="Capturer le curseur", variable=self.cursor_var,
+                       bg=color["bg2"], fg=color["fg"], selectcolor=color["bg3"], font=font["mono"],
+                       command=self.save_settings).grid(row=7, column=0, sticky=tk.W, pady=5)
+
+        self.audio_var = tk.BooleanVar(value=self.config_manager.get("record_audio", False))
+        tk.Checkbutton(grid, text="Enregistrer l'audio (micro)", variable=self.audio_var,
+                       bg=color["bg2"], fg=color["fg"], selectcolor=color["bg3"], font=font["mono"],
+                       command=self.save_settings).grid(row=7, column=1, sticky=tk.W, padx=5, pady=5)
+
+        tk.Label(grid, text="ARRÊT AUTO (min):", bg=color["bg2"], fg=color["fg"], font=font["mono"]).grid(row=8, column=0, sticky=tk.W, pady=5)
+        self.auto_stop_var = tk.StringVar(value=str(self.config_manager.get("auto_stop", 0)))
+        auto_stop_combo = ttk.Combobox(grid, textvariable=self.auto_stop_var, values=["0", "5", "10", "15", "30", "60"], width=10, font=font["mono"])
+        auto_stop_combo.grid(row=8, column=1, sticky=tk.W, padx=5, pady=5)
+        auto_stop_combo.bind("<<ComboboxSelected>>", self.save_settings)
+
+        action_frame = tk.Frame(container, bg=color["bg2"])
+        action_frame.pack(pady=20)
+
+        tk.Button(action_frame, text="SAUVEGARDER", bg=color["bg3"], fg=color["fg"], font=font["mono_bold"],
+                  command=self.save_settings).pack(side=tk.LEFT, padx=5)
+        tk.Button(action_frame, text="RÉINITIALISER", bg=color["accent2"], fg="white", font=font["mono_bold"],
+                  command=self.reset_settings).pack(side=tk.LEFT, padx=5)
+        tk.Button(action_frame, text="OUVRIR DOSSIER", bg=color["bg3"], fg=color["info"], font=font["mono_bold"],
+                  command=self.open_output_folder).pack(side=tk.LEFT, padx=5)
+
+        info_text = "[CODECS] mp4v = compatible partout | XVID/MJPG = AVI | H264/X264 = nécessite codec installé"
+        tk.Label(container, text=info_text, bg=color["bg2"], fg=color["warn"], font=font["small"]).pack(pady=5)
+
+    def build_logs_tab(self):
+        """Construit l'onglet des logs."""
+        top = tk.Frame(self.tab_logs, bg=color["bg2"])
+        top.pack(fill=tk.X, padx=5, pady=5)
+
+        tk.Label(top, text="[ CONSOLE HACKERS TCHAD ]", bg=color["bg2"], fg=color["accent"],
+                 font=font["mono_bold"]).pack(side=tk.LEFT, padx=10, pady=10)
+
+        tk.Button(top, text="EFFACER", bg=color["bg3"], fg=color["fg"], font=font["mono_bold"],
+                  command=self.clear_logs).pack(side=tk.RIGHT, padx=10)
+        tk.Button(top, text="COPIER", bg=color["bg3"], fg=color["info"], font=font["mono_bold"],
+                  command=self.copy_logs).pack(side=tk.RIGHT, padx=10)
+
+        self.log_text = scrolledtext.ScrolledText(self.tab_logs, bg=color["bg3"], fg=color["fg"],
+                                                  insertbackground=color["fg"], font=font["mono"],
+                                                  state=tk.DISABLED, wrap=tk.WORD)
+        self.log_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+    def build_about_tab(self):
+        """Construit l'onglet À propos."""
+        frame = tk.Frame(self.tab_about, bg=color["bg2"], highlightbackground=color["border"], highlightthickness=1)
+        frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        ascii_art = """
+        ██╗  ██╗ █████╗  ██████╗██╗  ██╗███████╗██████╗ ███████╗
+        ██║  ██║██╔══██╗██╔════╝██║ ██╔╝██╔════╝██╔══██╗██╔════╝
+        ███████║███████║██║     █████╔╝ █████╗  ██████╔╝███████╗
+        ██╔══██║██╔══██║██║     ██╔═██╗ ██╔══╝  ██╔══██╗╚════██║
+        ██║  ██║██║  ██║╚██████╗██║  ██╗███████╗██║  ██║███████║
+        ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝
+                              TCHAD
+        """
+        tk.Label(frame, text=ascii_art, bg=color["bg2"], fg=color["fg"], font=("Consolas", 8)).pack(pady=10)
+
+        about_text = (
+            f"Application : {APP_NAME}\n"
+            f"Version     : {APP_VERSION}\n"
+            f"Auteur      : {APP_AUTHOR}\n"
+            f"License     : Open Source - Éducation\n\n"
+            "Cet outil avancé permet d'enregistrer l'écran, la caméra,\n"
+            "ou les deux simultanément avec un style cyberpunk hacker.\n\n"
+            "Utilisez-le de manière responsable et légale.\n\n"
+            "Fonctionnalités:\n"
+            "- Capture écran haute qualité\n"
+            "- Capture webcam\n"
+            "- Mode écran partagé / incrustation\n"
+            "- Sélection du moniteur\n"
+            "- Watermark personnalisable\n"
+            "- Prévisualisation en direct\n"
+            "- Screenshot instantané\n"
+            "- Audio micro (optionnel)\n"
+        )
+        tk.Label(frame, text=about_text, bg=color["bg2"], fg=color["text"], font=font["mono"], justify=tk.LEFT).pack(pady=10)
+
+        sys_info = get_system_info()
+        sys_text = (
+            f"Système : {sys_info.get('os')} {sys_info.get('release')}\n"
+            f"Machine : {sys_info.get('machine')}\n"
+            f"Python  : {sys_info.get('python')}\n"
+            f"RAM     : {sys_info.get('ram_total', 'N/A')}"
+        )
+        tk.Label(frame, text=sys_text, bg=color["bg2"], fg=color["info"], font=font["mono"], justify=tk.LEFT).pack(pady=10)
+
+        self.sys_info_label = tk.Label(frame, text="", bg=color["bg2"], fg=color["warn"], font=font["mono"])
+        self.sys_info_label.pack(pady=5)
+
+    def build_footer(self):
+        """Crée le pied de page avec barre de statut."""
+        footer = tk.Frame(self.main_frame, bg=color["bg2"], highlightbackground=color["border"], highlightthickness=1)
+        footer.pack(fill=tk.X, pady=(10, 0))
+
+        self.status_label = tk.Label(footer, text="Prêt", bg=color["bg2"], fg=color["fg"], font=font["mono"], anchor=tk.W)
+        self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=10, pady=5)
+
+        self.rec_indicator = tk.Label(footer, text="●", bg=color["bg2"], fg=color["disabled"], font=("Consolas", 14))
+        self.rec_indicator.pack(side=tk.RIGHT, padx=10)
+
+    def refresh_devices(self):
+        """Rafraîchit la liste des caméras et moniteurs."""
+        self.refresh_monitors()
+        self.refresh_cameras()
+
+    def refresh_monitors(self):
+        """Met à jour le combobox des moniteurs."""
+        monitors = self.recorder.monitors
+        names = [m["name"] for m in monitors]
+        self.monitor_combo["values"] = names
+        current = self.config_manager.get("monitor", 0)
+        if current < len(names):
+            self.monitor_combo.current(current)
+        else:
+            self.monitor_combo.current(0)
+
+    def refresh_cameras(self):
+        """Met à jour le combobox des caméras."""
+        cameras = self.recorder.cameras
+        if not cameras:
+            cameras = [{"id": 0, "name": "Caméra 0 (défaut)"}]
+        names = [c["name"] for c in cameras]
+        self.camera_combo["values"] = names
+        current = self.config_manager.get("camera_id", 0)
+        if current < len(names):
+            self.camera_combo.current(current)
+        else:
+            self.camera_combo.current(0)
+
+    def on_monitor_changed(self, event=None):
+        """Callback changement de moniteur."""
+        idx = self.monitor_combo.current()
+        self.config_manager.set("monitor", idx)
+        self.config_manager.save()
+
+    def on_mode_changed(self):
+        """Callback changement de mode d'enregistrement."""
         mode = self.mode_var.get()
-        self.composite.set_mode(mode)
-        if mode in ("Caméra seule", "Écran + webcam (PiP)", "Webcam + écran (PiP)"):
-            if not self.camera_source.active:
-                self.toggle_camera()
-        LOGGER.info(f"Mode source : {mode}")
+        self.config_manager.set("mode", mode)
+        self.config_manager.save()
+        self.log_status(f"[MODE] Mode sélectionné: {mode.upper()}")
 
-    def _update_screen_source(self):
+    def choose_output_dir(self):
+        """Ouvre un dialogue pour choisir le dossier de sortie."""
+        path = filedialog.askdirectory(initialdir=self.config_manager.get("output_dir", get_desktop_path()))
+        if path:
+            self.output_entry.delete(0, tk.END)
+            self.output_entry.insert(0, path)
+            self.save_settings()
+
+    def open_output_folder(self):
+        """Ouvre le dossier de sortie dans l'explorateur."""
+        path = self.config_manager.get("output_dir", get_desktop_path())
+        if not os.path.isdir(path):
+            ensure_dir(path)
         try:
-            idx = int(self.monitor_var.get().split(":")[0])
-        except Exception:
-            idx = 0
-        self.screen_source = ScreenSource(monitor_index=idx)
-
-    def toggle_camera(self):
-        if self.camera_source.active:
-            self.camera_source.stop()
-            self.btn_cam_toggle.config(text="OUVRIR CAMÉRA", bg="#003300")
-            self.cam_status.config(text="Caméra fermée", fg=ACCENT_RED)
-        else:
-            if self.camera_source.start():
-                self.btn_cam_toggle.config(text="FERMER CAMÉRA", bg="#550000")
-                self.cam_status.config(text="Caméra active", fg=DEFAULT_FG)
-            else:
-                messagebox.showerror("Caméra", "Impossible d'ouvrir la caméra.")
-
-    def get_active_resolution(self):
-        res = self.resolution_var.get()
-        if res == "Caméra native":
-            return self.camera_source.get_size()
-        if res == "Écran native":
-            return self.screen_source.get_size()
-        return parse_resolution(res)
-
-    def _start_preview(self):
-        self.preview_running = True
-        self.preview_thread = threading.Thread(target=self._preview_loop, daemon=True)
-        self.preview_thread.start()
-
-    def _preview_loop(self):
-        interval = 1.0 / 30.0
-        while self.preview_running:
-            t0 = time.time()
-            screen = self.screen_source.read()
-            cam = self.camera_source.read() if self.camera_source.active else None
-            elapsed = self.engine.get_elapsed() if self.engine.recording else 0
-            composite = self.composite.render(screen, cam, self.engine.recording, elapsed)
-            self.last_frame = composite
-            if composite is not None:
-                try:
-                    resized = cv2.resize(composite, (720, 405))
-                    rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-                    pil_img = Image.fromarray(rgb)
-                    self.root.after(0, self.preview.update_frame, pil_img)
-                    self.root.after(0, self.preview_size_label.config,
-                                    {"text": f"{composite.shape[1]}x{composite.shape[0]} @ {self.fps_var.get()}fps"})
-                except Exception as exc:
-                    LOGGER.error(f"Preview render : {exc}")
-
-            if self.engine.recording:
-                self.root.after(0, self.timer_display.config,
-                                {"text": format_duration(self.engine.get_elapsed())})
-                self.engine.push_frame(composite)
-                self._update_live_stats()
-            else:
-                self.root.after(0, self.timer_display.config, {"text": "00:00:00"})
-
-            if self.engine.recording and self.timer_enabled.get():
-                limit = self.timer_min_var.get() * 60
-                if self.engine.get_elapsed() >= limit:
-                    self.root.after(0, self.stop_recording)
-
-            elapsed_loop = time.time() - t0
-            time.sleep(max(0.001, interval - elapsed_loop))
-
-    def _update_live_stats(self):
-        txt = (
-            f"Frames écrits : {self.engine.frames_written}\n"
-            f"Frames perdus : {self.engine.frames_dropped}\n"
-            f"Durée         : {format_duration(self.engine.get_elapsed())}\n"
-            f"État          : {'PAUSE' if self.engine.paused else 'REC'}"
-        )
-        self.stats_label.config(text=txt)
-
-    def update_stats_after_stop(self, elapsed):
-        txt = (
-            f"Dernière session\n"
-            f"Durée : {format_duration(elapsed)}\n"
-            f"Frames écrits : {self.engine.frames_written}\n"
-            f"Frames perdus : {self.engine.frames_dropped}"
-        )
-        self.stats_label.config(text=txt)
-
-    def start_recording(self):
-        if self.engine.recording:
-            return
-        self._update_screen_source()
-        self.composite.overlay_text = self.overlay_var.get()
-        self.composite.pip_position = self.pip_pos_var.get()
-        self.composite.pip_scale = self.pip_scale_var.get()
-        self.composite.webcam_shape = self.webcam_shape_var.get()
-        self.composite.show_watermark = self.watermark_var.get()
-        self.composite.show_timestamp = self.timestamp_var.get()
-        self.composite.show_rec_indicator = self.rec_indicator_var.get()
-        self.composite.border_color = DEFAULT_FG if self.theme_var.get() == "green" else ACCENT_RED
-
-        self.engine.configure(
-            self.mode_var.get(),
-            self.fps_var.get(),
-            self.quality_var.get(),
-            self.output_dir_var.get(),
-            self.filename_var.get(),
-            self.get_active_resolution(),
-            self.audio_var.get(),
-        )
-        if self.engine.start():
-            self.status.config(text="● ENREGISTREMENT EN COURS", fg=ACCENT_RED)
-            self.btn_record.config(state=tk.DISABLED)
-            self.btn_stop.config(state=tk.NORMAL)
-            LOGGER.info("Enregistrement démarré")
-
-    def stop_recording(self):
-        if not self.engine.recording:
-            return
-        self.engine.stop()
-        self.status.config(text="Prêt", fg=DEFAULT_FG)
-        self.btn_record.config(state=tk.NORMAL)
-        self.btn_stop.config(state=tk.DISABLED)
-        self.btn_pause.config(text="⏸ PAUSE", bg="#444400")
-        self.timer_display.config(text="00:00:00")
-
-    def pause_recording(self):
-        if not self.engine.recording:
-            return
-        self.engine.toggle_pause()
-        if self.engine.paused:
-            self.btn_pause.config(text="▶ REPRENDRE", bg="#004400")
-            self.status.config(text="⏸ PAUSE", fg="#FFBF00")
-        else:
-            self.btn_pause.config(text="⏸ PAUSE", bg="#444400")
-            self.status.config(text="● ENREGISTREMENT EN COURS", fg=ACCENT_RED)
-
-    def take_screenshot(self):
-        if self.last_frame is None:
-            return
-        ensure_dir(self.output_dir_var.get())
-        path = os.path.join(self.output_dir_var.get(), f"screenshot_{now_str()}.png")
-        try:
-            cv2.imwrite(path, self.last_frame)
-            self.history.append((path, "Screenshot", os.path.getsize(path)))
-            self._refresh_history()
-            self.status.config(text=f"Capture : {path}")
-            LOGGER.info(f"Screenshot : {path}")
-        except Exception as exc:
-            LOGGER.error(f"Screenshot : {exc}")
-
-    def on_recording_finished(self, path):
-        if path and os.path.exists(path):
-            size = os.path.getsize(path)
-            self.history.append((path, "Vidéo", size))
-            self._refresh_history()
-            self.status.config(text=f"Vidéo sauvegardée ({format_size(size)})")
-
-    def _refresh_history(self):
-        self.history_list.delete(0, tk.END)
-        for item, kind, size in reversed(self.history):
-            display = f"[{kind}] {os.path.basename(item)} — {format_size(size)}"
-            self.history_list.insert(tk.END, display)
-
-    def _on_history_double(self, event):
-        selection = self.history_list.curselection()
-        if not selection:
-            return
-        idx = selection[0]
-        real_idx = len(self.history) - 1 - idx
-        path = self.history[real_idx][0]
-        self._open_path(path)
-
-    def _open_output_dir(self):
-        self._open_path(self.output_dir_var.get())
-
-    def _open_path(self, path):
-        try:
-            if sys.platform == "win32":
+            if platform.system() == "Windows":
                 os.startfile(path)
-            elif sys.platform == "darwin":
+            elif platform.system() == "Darwin":
                 subprocess.Popen(["open", path])
             else:
                 subprocess.Popen(["xdg-open", path])
-        except Exception as exc:
-            LOGGER.error(f"Ouverture : {exc}")
+        except Exception as e:
+            self.log_status(f"[ERREUR] Impossible d'ouvrir le dossier: {e}")
 
-    def on_close(self):
-        self.preview_running = False
-        if self.preview_thread:
-            self.preview_thread.join(timeout=2)
-        self.camera_source.stop()
-        if self.engine.recording:
-            self.engine.stop()
-        self.config.set("window_geometry", self.root.geometry())
-        self.config.save()
+    def save_settings(self, event=None):
+        """Sauvegarde tous les paramètres."""
+        try:
+            self.config_manager.set("fps", int(self.fps_var.get()))
+        except ValueError:
+            self.config_manager.set("fps", 30)
+        self.config_manager.set("quality", self.quality_var.get())
+        self.config_manager.set("codec", self.codec_var.get())
+        self.config_manager.set("monitor", self.monitor_combo.current())
+        self.config_manager.set("output_dir", self.output_entry.get())
+        self.config_manager.set("prefix", self.prefix_var.get())
+        self.config_manager.set("watermark", self.watermark_var.get())
+        self.config_manager.set("watermark_text", self.watermark_text_var.get())
+        self.config_manager.set("cursor", self.cursor_var.get())
+        self.config_manager.set("record_audio", self.audio_var.get())
+        self.config_manager.set("split_screen", self.split_var.get())
+        self.config_manager.set("show_preview", self.preview_var.get())
+        self.config_manager.set("mode", self.mode_var.get())
+        try:
+            self.config_manager.set("auto_stop", int(self.auto_stop_var.get()))
+        except ValueError:
+            self.config_manager.set("auto_stop", 0)
+        try:
+            self.config_manager.set("camera_id", self.camera_combo.current())
+        except Exception:
+            pass
+        self.config_manager.save()
+
+    def reset_settings(self):
+        """Réinitialise les paramètres par défaut."""
+        if messagebox.askyesno("Réinitialiser", "Voulez-vous vraiment réinitialiser les paramètres ?"):
+            self.config_manager.config = DEFAULT_CONFIG.copy()
+            self.config_manager.set("output_dir", get_desktop_path())
+            self.config_manager.save()
+            self.root.destroy()
+            main()
+
+    def setup_hotkeys(self):
+        """Configure les raccourcis clavier globaux si disponibles."""
+        if GLOBAL_HOTKEYS:
+            try:
+                keyboard.add_hotkey(self.config_manager.get("hotkey_record", "f9"), self.start_recording)
+                keyboard.add_hotkey(self.config_manager.get("hotkey_stop", "f10"), self.stop_recording)
+                keyboard.add_hotkey(self.config_manager.get("hotkey_screenshot", "f11"), self.take_screenshot)
+                self.log_status("[HOTKEYS] Raccourcis globaux activés (F9/F10/F11)")
+            except Exception as e:
+                self.log_status(f"[WARN] Raccourcis globaux indisponibles: {e}")
+        else:
+            self.log_status("[WARN] Module 'keyboard' non installé. Raccourcis globaux désactivés.")
+
+    def start_recording(self):
+        """Démarre l'enregistrement."""
+        if self.recorder.recording:
+            return
+        self.save_settings()
+        success = self.recorder.start_recording()
+        if success:
+            self.btn_record.config(state=tk.DISABLED, bg=color["disabled"])
+            self.btn_stop.config(state=tk.NORMAL, bg=color["accent"])
+            self.rec_indicator.config(fg=color["accent"])
+            if self.preview_var.get():
+                self.preview_active = True
+
+    def stop_recording(self):
+        """Arrête l'enregistrement."""
+        if not self.recorder.recording:
+            return
+        self.recorder.stop_recording()
+        self.btn_record.config(state=tk.NORMAL, bg=color["accent2"])
+        self.btn_stop.config(state=tk.NORMAL, bg=color["bg3"])
+        self.btn_pause.config(text="⏸ PAUSE")
+        self.rec_indicator.config(fg=color["disabled"])
+        self.preview_active = False
+        self.preview_canvas.delete("all")
+        messagebox.showinfo("Enregistrement terminé", f"Fichier sauvegardé:\n{self.recorder.output_path}")
+
+    def toggle_pause(self):
+        """Bascule pause/reprise."""
+        if not self.recorder.recording:
+            return
+        if self.recorder.paused:
+            self.recorder.resume_recording()
+            self.btn_pause.config(text="⏸ PAUSE")
+        else:
+            self.recorder.pause_recording()
+            self.btn_pause.config(text="▶ REPRENDRE")
+
+    def take_screenshot(self):
+        """Prend un screenshot."""
+        path = self.recorder.take_screenshot()
+        if path:
+            self.log_status(f"[OK] Screenshot: {path}")
+
+    def open_selected_camera(self):
+        """Ouvre la caméra sélectionnée dans l'onglet caméra."""
+        idx = self.camera_combo.current()
+        self.config_manager.set("camera_id", idx)
+        self.config_manager.save()
+        if self.recorder.open_camera(idx):
+            self.camera_preview.start()
+            self.log_status(f"[CAM] Aperçu caméra {idx} démarré")
+        else:
+            messagebox.showerror("Caméra", f"Impossible d'ouvrir la caméra {idx}")
+
+    def close_camera(self):
+        """Ferme la caméra."""
+        self.camera_preview.stop()
+        self.recorder.close_camera()
+        self.camera_canvas.delete("all")
+
+    def on_frame_recorded(self, frame, elapsed):
+        """Callback appelé à chaque frame enregistrée."""
+        self.elapsed_seconds = elapsed
+        if self.preview_var.get() and self.preview_active:
+            self.update_preview(frame)
+
+    def update_preview(self, frame):
+        """Met à jour la prévisualisation en direct."""
+        try:
+            canvas_w = self.preview_canvas.winfo_width()
+            canvas_h = self.preview_canvas.winfo_height()
+            if canvas_w < 10 or canvas_h < 10:
+                return
+            resized = resize_keep_aspect(frame, canvas_w, canvas_h)
+            if resized is None:
+                return
+            resized = apply_matrix_effect(resized, intensity=0.05)
+            rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(rgb)
+            imgtk = ImageTk.PhotoImage(image=img)
+            self.preview_canvas.imgtk = imgtk
+            self.preview_canvas.create_image(canvas_w // 2, canvas_h // 2, image=imgtk, anchor=tk.CENTER)
+        except Exception as e:
+            logger.error(f"Erreur update preview: {e}")
+
+    def update_clock(self):
+        """Met à jour l'horloge."""
+        now = datetime.datetime.now().strftime("%H:%M:%S")
+        self.clock_label.config(text=now)
+        self.root.after(1000, self.update_clock)
+
+    def update_timer(self):
+        """Met à jour le timer d'enregistrement et les stats."""
+        if self.recorder.recording:
+            elapsed = self.recorder.get_duration()
+            self.timer_label.config(text=format_duration(elapsed))
+            size = self.recorder.get_file_size()
+            stats = (
+                f"FPS: {self.recorder.actual_fps:.1f}\n"
+                f"Frames: {self.recorder.frames_recorded}\n"
+                f"Taille: {format_size(size)}"
+            )
+            self.stats_label.config(text=stats)
+            if int(elapsed * 2) % 2 == 0:
+                self.rec_indicator.config(fg=color["accent"])
+            else:
+                self.rec_indicator.config(fg=color["accent2"])
+        else:
+            self.timer_label.config(text="00:00:00")
+            self.stats_label.config(text="FPS: 0.0\nFrames: 0\nTaille: 0 B")
+            self.rec_indicator.config(fg=color["disabled"])
+        self.root.after(200, self.update_timer)
+
+    def update_system_stats(self):
+        """Met à jour les statistiques système."""
+        if HAS_PSUTIL:
+            try:
+                cpu = psutil.cpu_percent(interval=None)
+                ram = psutil.virtual_memory().percent
+                text = f"CPU: {cpu}% | RAM: {ram}%"
+                if hasattr(self, 'sys_info_label'):
+                    self.sys_info_label.config(text=text)
+                self.status_label.config(text=f"{self.status_history[-1] if self.status_history else 'Prêt'} | {text}")
+            except Exception:
+                pass
+        self.root.after(2000, self.update_system_stats)
+
+    def log_status(self, message):
+        """Ajoute un message dans les logs et la barre de statut."""
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        full = f"[{timestamp}] {message}"
+        self.status_history.append(full)
+        self.status_label.config(text=full)
+        try:
+            self.log_text.config(state=tk.NORMAL)
+            self.log_text.insert(tk.END, full + "\n")
+            self.log_text.see(tk.END)
+            self.log_text.config(state=tk.DISABLED)
+        except Exception:
+            pass
+
+    def clear_logs(self):
+        """Efface les logs."""
+        self.log_text.config(state=tk.NORMAL)
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.config(state=tk.DISABLED)
+
+    def copy_logs(self):
+        """Copie les logs dans le presse-papiers."""
+        try:
+            text = self.log_text.get(1.0, tk.END)
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.log_status("[OK] Logs copiés dans le presse-papiers")
+        except Exception as e:
+            self.log_status(f"[ERREUR] Copie logs: {e}")
+
+    def on_closing(self):
+        """Gestion de la fermeture de l'application."""
+        if self.recorder.recording:
+            if not messagebox.askyesno("Quitter", "Un enregistrement est en cours. Voulez-vous l'arrêter et quitter ?"):
+                return
+            self.recorder.stop_recording()
+        if self.camera_preview:
+            self.camera_preview.stop()
+        self.close_camera()
+        self.save_settings()
         self.root.destroy()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# POINT D'ENTRÉE
+# FONCTIONS SUPPLÉMENTAIRES
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def check_dependencies():
+    """Vérifie que les dépendances principales sont installées."""
+    required = {
+        "cv2": "opencv-python",
+        "numpy": "numpy",
+        "PIL": "Pillow",
+        "mss": "mss",
+    }
+    missing = []
+    for module, package in required.items():
+        try:
+            __import__(module)
+        except ImportError:
+            missing.append(package)
+    return missing
+
+
+def print_banner():
+    """Affiche la bannière dans la console."""
+    banner = f"""
+    ╔══════════════════════════════════════════════════════════════╗
+    ║                  {APP_NAME} v{APP_VERSION}              ║
+    ║                      by {APP_AUTHOR}                       ║
+    ╚══════════════════════════════════════════════════════════════╝
+    """
+    print(banner)
+
+
+def handle_cli_args():
+    """Gère les arguments en ligne de commande."""
+    args = sys.argv[1:]
+    config = {}
+    if "--screen" in args:
+        config["mode"] = "screen"
+    if "--camera" in args:
+        config["mode"] = "camera"
+    if "--both" in args:
+        config["mode"] = "both"
+    if "--no-gui" in args:
+        config["no_gui"] = True
+    return config
+
+
+def console_mode(config):
+    """Mode console sans interface graphique."""
+    print_banner()
+    print("Mode console activé. Appuyez sur Ctrl+C pour arrêter.")
+    cfg = ConfigManager()
+    for key, value in config.items():
+        if key != "no_gui":
+            cfg.set(key, value)
+    recorder = VideoRecorder(cfg, status_callback=print)
+    try:
+        recorder.start_recording()
+        while recorder.recording:
+            time.sleep(1)
+            print(f"Durée: {format_duration(recorder.get_duration())}")
+    except KeyboardInterrupt:
+        print("Arrêt demandé...")
+        recorder.stop_recording()
+
+
+def create_shortcut_windows():
+    """Crée un raccourci sur le Bureau Windows (optionnel)."""
+    if platform.system() != "Windows":
+        return False
+    try:
+        import winshell
+        from win32com.client import Dispatch
+        desktop = winshell.desktop()
+        path = os.path.join(desktop, "HACKERS TCHAD RECORDER.lnk")
+        target = os.path.abspath(sys.argv[0])
+        shell = Dispatch('WScript.Shell')
+        shortcut = shell.CreateShortCut(path)
+        shortcut.Targetpath = target
+        shortcut.WorkingDirectory = os.path.dirname(target)
+        shortcut.IconLocation = target
+        shortcut.save()
+        return True
+    except Exception as e:
+        logger.error(f"Erreur création raccourci: {e}")
+        return False
+
+
+def show_splash(root):
+    """Affiche un écran de démarrage temporaire."""
+    splash = tk.Toplevel(root)
+    splash.overrideredirect(True)
+    splash.configure(bg=color["bg"])
+    width, height = 500, 300
+    x = (root.winfo_screenwidth() // 2) - (width // 2)
+    y = (root.winfo_screenheight() // 2) - (height // 2)
+    splash.geometry(f"{width}x{height}+{x}+{y}")
+
+    tk.Label(splash, text=APP_NAME, bg=color["bg"], fg=color["fg"], font=font["title"]).pack(pady=20)
+    tk.Label(splash, text=f"v{APP_VERSION}", bg=color["bg"], fg=color["accent"], font=font["mono_bold"]).pack()
+    tk.Label(splash, text=f"by {APP_AUTHOR}", bg=color["bg"], fg=color["info"], font=font["mono"]).pack(pady=10)
+
+    progress = ttk.Progressbar(splash, mode="indeterminate", length=400)
+    progress.pack(pady=30)
+    progress.start()
+
+    splash.after(2500, splash.destroy)
+    root.wait_window(splash)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POINT D'ENTRÉE PRINCIPAL
+# ═══════════════════════════════════════════════════════════════════════════════
+
 def main():
+    """Fonction principale de l'application."""
+    print_banner()
+    missing = check_dependencies()
+    if missing:
+        print("[ERREUR] Dépendances manquantes:")
+        for pkg in missing:
+            print(f"  - {pkg}")
+        print("Installez-les avec: pip install " + " ".join(missing))
+        sys.exit(1)
+
+    cli_config = handle_cli_args()
+    if cli_config.get("no_gui", False):
+        console_mode(cli_config)
+        return
+
     root = tk.Tk()
-    app = RecorderApp(root)
-    root.protocol("WM_DELETE_WINDOW", app.on_close)
+    try:
+        root.iconbitmap(default="")
+    except Exception:
+        pass
+    show_splash(root)
+    app = HackerRecorderApp(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_closing)
     root.mainloop()
 
 
