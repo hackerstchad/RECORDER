@@ -1,0 +1,12 @@
+opencv-python==4.9.0.80
+numpy==1.26.4
+Pillow==10.3.0
+pynput==1.7.6
+pyautogui==0.9.54
+screeninfo==0.8.1
+moviepy==1.0.3
+pyaudio==0.2.14
+comtypes==1.4.1
+ctypes-callable==1.0.4
+wave
+threading
