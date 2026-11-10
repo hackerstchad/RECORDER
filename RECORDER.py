@@ -7,7 +7,7 @@
 ║                                                                              ║
 ║   Auteur  : HACKERS TCHAD                                                    ║
 ║   Version : 9.9.9 (ULTIMATE EDITION)                                         ║
-║   Date    : 2025                                                             ║
+║   Date    : 2026                                                             ║
 ║   Style   : Cyberpunk Hacker - Vert/Rouge/Noir                               ║
 ║                                                                              ║
 ║   Fonctionnalités principales :                                              ║
