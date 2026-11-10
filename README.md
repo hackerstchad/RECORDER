@@ -1,4 +1,4 @@
-# RECORDER — HACKERS TCHAD EDITION
+# RECORDER 
 
 <img width="1024" height="1024" alt="OIG4 f0ltjAM6EIaR" src="https://github.com/user-attachments/assets/956a3fd9-fd66-4b24-b9b4-fb81a4f35afe" />
 
